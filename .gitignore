@@ -1,0 +1,25 @@
+# Secrets and environment
+.env*
+secrets/
+credentials*
+*.pem
+*.key
+
+# Logs, databases, local data
+*.log
+*.sqlite
+*.db
+
+# Index exports. `--save` output contains verbatim prompt text, so it must
+# never be committed.
+*.json
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Node
+node_modules/
+
+# macOS
+.DS_Store
