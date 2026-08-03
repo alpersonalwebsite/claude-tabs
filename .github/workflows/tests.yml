@@ -12,7 +12,7 @@ permissions:
 
 # A force-push should replace the in-flight run rather than queue behind it.
 concurrency:
-  group: tests-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -26,11 +26,15 @@ jobs:
         run: |
           echo "runner python3: $(python3 --version) at $(command -v python3)"
           echo "system python3: $(/usr/bin/python3 --version)"
-      # Deliberately the system interpreter, not the runner toolchain. The
-      # README promises the macOS system Python, so that is what has to pass;
-      # the toolchain python3 is a much newer version and would hide a break.
+      # Both interpreters, on purpose. The system Python is the floor the README
+      # promises and the version most users will have; the runner toolchain is
+      # far newer. Testing only one end leaves the other unproven, and the whole
+      # suite runs in well under a second, so there is nothing to save by
+      # picking. Keep both steps if the versions above ever diverge further.
       - name: Run tests on the system interpreter
         run: /usr/bin/python3 -m unittest discover -p 'test_*.py' -v
+      - name: Run tests on the runner interpreter
+        run: python3 -m unittest discover -p 'test_*.py'
       - name: Check the CLI starts
         run: |
           test -x claude_tabs.py
