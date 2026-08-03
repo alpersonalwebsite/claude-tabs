@@ -28,7 +28,7 @@ import subprocess
 import sys
 import time
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 HOME = os.path.expanduser("~")
 PROJECTS_DIR = os.path.join(HOME, ".claude", "projects")
@@ -848,7 +848,11 @@ def trunc(text, width):
     return text if len(text) <= width else text[:max(1, width - 1)] + "…"
 
 
-MATCH_MARK = {"title": " ", "mtime": "~", "weak": "?", "none": "!"}
+# Every match state resolve_transcripts can set needs an entry here. A state
+# missing from this map renders as a blank, which reads as an exact local match
+# and hides the difference.
+MATCH_MARK = {"title": " ", "title-global": "*", "mtime": "~", "weak": "?",
+              "none": "!"}
 
 
 def print_tree(rows, paint, show_prompts=False):
@@ -934,6 +938,40 @@ def compile_pattern(pattern, flag):
         raise SystemExit(2)
 
 
+def index_payload(rows, now=None):
+    """The JSON structure written by --json and --save."""
+    return {"generated_at": time.time() if now is None else now, "tabs": rows}
+
+
+def session_mtime(row):
+    return ((row["claude"] or {}).get("session") or {}).get("mtime") or 0
+
+
+def select_rows(rows, claude_only=False, grep=None, idle_minutes=None,
+                sort="window", now=None):
+    """Apply the view filters and ordering.
+
+    Returns a new list; the caller's is never reordered. Kept separate from
+    main() so the filtering and sort rules can be tested directly.
+    """
+    view = list(rows)
+    if claude_only:
+        view = [r for r in view if r["claude"]]
+    if grep is not None:
+        view = [r for r in view if matches(r, grep)]
+    if idle_minutes is not None:
+        cutoff = (time.time() if now is None else now) - idle_minutes * 60
+        # Idle only means anything for a session with a transcript to age.
+        view = [r for r in view
+                if r["claude"] and session_mtime(r) < cutoff]
+    if sort == "idle":
+        view.sort(key=session_mtime)
+    elif sort == "path":
+        view.sort(key=lambda r: (r["cwd"] or "", r["window_index"],
+                                 r["tab_index"]))
+    return view
+
+
 def matches(row, rx):
     sess = (row["claude"] or {}).get("session") or {}
     hay = (row["cwd"], row["tab_name"], row["title"], sess.get("ai_title"),
@@ -1012,27 +1050,19 @@ def main():
         return jump(rows, args.jump, flash=not args.no_flash,
                     color=args.flash_color, seconds=args.flash_seconds)
 
+    # Deliberately the whole index, not the filtered view: --save is for handing
+    # the complete picture to another tool, so a filter on the terminal output
+    # does not silently truncate the file. --json does follow the filters.
     if args.save:
         with open(args.save, "w") as fh:
-            json.dump({"generated_at": time.time(), "tabs": rows}, fh, indent=2)
+            json.dump(index_payload(rows), fh, indent=2)
 
-    view = rows
-    if args.claude_only:
-        view = [r for r in view if r["claude"]]
-    if args.grep:
-        rx = compile_pattern(args.grep, "--grep")
-        view = [r for r in view if matches(r, rx)]
-    if args.idle is not None:
-        cutoff = time.time() - args.idle * 60
-        view = [r for r in view if r["claude"] and
-                ((r["claude"]["session"] or {}).get("mtime") or 0) < cutoff]
-    if args.sort == "idle":
-        view.sort(key=lambda r: ((r["claude"] or {}).get("session") or {}).get("mtime") or 0)
-    elif args.sort == "path":
-        view.sort(key=lambda r: (r["cwd"] or "", r["window_index"], r["tab_index"]))
+    view = select_rows(rows, claude_only=args.claude_only,
+                       grep=compile_pattern(args.grep, "--grep") if args.grep else None,
+                       idle_minutes=args.idle, sort=args.sort)
 
     if args.json:
-        json.dump({"generated_at": time.time(), "tabs": view}, sys.stdout, indent=2)
+        json.dump(index_payload(view), sys.stdout, indent=2)
         print()
     elif args.md:
         print_markdown(view)
