@@ -22,9 +22,10 @@ Read-only except `--jump`, which activates a tab.
 ## Install
 
 ```sh
-git clone https://github.com/<owner>/claude-tabs.git
+git clone https://github.com/alpersonalwebsite/claude-tabs.git
 cd claude-tabs
 chmod +x claude_tabs.py
+mkdir -p ~/.local/bin
 ln -sfn "$PWD/claude_tabs.py" ~/.local/bin/claude-tabs   # or anywhere on PATH
 ```
 
