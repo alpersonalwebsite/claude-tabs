@@ -28,7 +28,7 @@ import subprocess
 import sys
 import time
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
 HOME = os.path.expanduser("~")
 PROJECTS_DIR = os.path.join(HOME, ".claude", "projects")
@@ -417,6 +417,82 @@ def claude_cwds():
     return cwds
 
 
+TMUX_PANE_FMT = US.join(["#{pane_tty}", "#{session_name}", "#{window_index}",
+                         "#{pane_index}", "#{pane_active}", "#{window_active}",
+                         "#{pane_title}"])
+TMUX_CLIENT_FMT = US.join(["#{client_tty}", "#{client_session}"])
+
+
+def short_tty(tty):
+    return (tty or "").replace("/dev/", "")
+
+
+def tmux_panes():
+    """short tty -> tmux pane facts, for every pane on every tmux session.
+
+    A claude inside tmux runs on a tmux pty, not on the iTerm pane's tty, so this
+    is what connects the two. `pane_title` matters as much as the tty: tmux
+    captures the title the program sets, so Claude's own session title is here
+    even though the iTerm tab shows tmux's window name instead.
+    """
+    out = {}
+    for line in run(["tmux", "list-panes", "-a", "-F", TMUX_PANE_FMT],
+                    timeout=20).splitlines():
+        f = line.split(US)
+        if len(f) < 7:
+            continue
+        out[short_tty(f[0])] = {
+            "session": f[1],
+            "window": f[2],
+            "pane": f[3],
+            "visible": f[4] == "1" and f[5] == "1",
+            "title": f[6],
+        }
+    return out
+
+
+def tmux_clients():
+    """tmux session name -> short ttys of the terminals attached to it."""
+    out = {}
+    for line in run(["tmux", "list-clients", "-F", TMUX_CLIENT_FMT],
+                    timeout=20).splitlines():
+        f = line.split(US)
+        if len(f) < 2:
+            continue
+        out.setdefault(f[1], []).append(short_tty(f[0]))
+    return out
+
+
+# Strongest attribution route first. A claude on the pane's own tty is certain; a
+# tmux client tty is nearly so; ITERM_SESSION_ID is a guess, because it is
+# inherited and so names whichever pane started the nesting.
+ROUTE_RANK = {"direct": 0, "tmux": 1, "env": 2}
+
+
+def attribute_claudes(panes, procs, cpids, pane_of):
+    """iTerm pane unique id -> [(pid, route, tmux facts or None)]."""
+    by_tty = {short_tty(p["tty"]): p for p in panes}
+    by_guid = {p["iterm_session_id"]: p for p in panes}
+    tpanes, tclients = tmux_panes(), tmux_clients()
+    out = {}
+    for pid in sorted(cpids):
+        tty = procs[pid]["tty"]
+        pane, route, tmux_info = by_tty.get(tty), "direct", None
+        if pane is None and tty in tpanes:
+            facts = tpanes[tty]
+            for client_tty in tclients.get(facts["session"], []):
+                if client_tty in by_tty:
+                    pane, route, tmux_info = by_tty[client_tty], "tmux", facts
+                    break
+        if pane is None:
+            guid = pane_of.get(pid)
+            pane, route, tmux_info = by_guid.get(guid or ""), "env", None
+        if pane is None:
+            continue
+        out.setdefault(pane["iterm_session_id"], []).append((pid, route, tmux_info))
+    return out
+
+
 def tty_foreground(procs):
     """short tty -> command of that tty's foreground process."""
     fg = {}
@@ -709,11 +785,7 @@ def build_index():
     panes = iterm_panes()
     recover_flashes(panes)
 
-    by_pane = {}
-    for pid in sorted(cpids):
-        guid = pane_of.get(pid)
-        if guid:
-            by_pane.setdefault(guid, []).append(pid)
+    by_pane = attribute_claudes(panes, procs, cpids, pane_of)
 
     rows = []
     for pane in panes:
@@ -721,23 +793,28 @@ def build_index():
         row = dict(pane)
         row["title"] = title
         row["foreground_hint"] = hint
-        row["foreground_command"] = fg.get(pane["tty"].replace("/dev/", ""), "")
+        row["foreground_command"] = fg.get(short_tty(pane["tty"]), "")
         row["claude"] = None
-        pids = by_pane.get(pane["iterm_session_id"], [])
-        if pids:
-            # ITERM_SESSION_ID is inherited, so a claude started inside tmux (or
-            # any nested shell) carries the id of the pane that spawned the
-            # server rather than the pane it actually runs in. Prefer a process
-            # whose own tty is this pane's; otherwise say the link is indirect.
-            short_tty = pane["tty"].replace("/dev/", "")
-            direct = [p for p in pids if procs[p]["tty"] == short_tty]
-            pid = direct[0] if direct else pids[0]
+        found = by_pane.get(pane["iterm_session_id"], [])
+        if found:
+            # One iTerm pane can host many tmux panes but shows one at a time,
+            # so the visible one is the session this tab is actually displaying.
+            found.sort(key=lambda r: (ROUTE_RANK[r[1]],
+                                      0 if (r[2] or {}).get("visible") else 1,
+                                      r[0]))
+            pid, route, tmux_info = found[0]
             row["cwd"] = cwd_of.get(pid) or pane["shell_path"]
+            if tmux_info and tmux_info.get("title"):
+                # The iTerm tab name is tmux's window name, which says nothing
+                # about the session. tmux kept the title Claude set, so use it
+                # and title matching works inside tmux too.
+                row["title"] = clean_title(tmux_info["title"])[0] or row["title"]
             row["claude"] = {
                 "pid": pid,
-                "extra_pids": [p for p in pids if p != pid],
-                "attached": "direct" if direct else "nested",
+                "extra_pids": [r[0] for r in found[1:]],
+                "attached": route,
                 "process_tty": procs[pid]["tty"],
+                "tmux": tmux_info,
                 "uptime": procs[pid]["etime"],
                 "started_at": time.time() - parse_etime(procs[pid]["etime"]),
                 "command": procs[pid]["command"],
@@ -901,8 +978,13 @@ def print_tree(rows, paint, show_prompts=False):
                     meta += " " + trunc(sess["git_branch"], 28)
             else:
                 meta = "no transcript on disk yet"
-            if cl["attached"] == "nested":
-                meta += "  nested(%s)" % cl["process_tty"]
+            if cl["attached"] == "tmux" and cl["tmux"]:
+                t = cl["tmux"]
+                meta += "  tmux %s:%s.%s%s" % (
+                    trunc(t["session"], 18), t["window"], t["pane"],
+                    "" if t["visible"] else " (hidden)")
+            elif cl["attached"] == "env":
+                meta += "  env-linked(%s)" % cl["process_tty"]
             print(" %s %s %s %s%s %s" % (
                 cursor, paint("33", label), paint("36", path),
                 paint("1", title.ljust(title_w)),
