@@ -28,14 +28,16 @@ mkdir -p ~/.local/bin
 ln -sfn "$PWD/claude_tabs.py" ~/.local/bin/claude-tabs
 ```
 
-`~/.local/bin` is **not** on the default macOS PATH. `/etc/paths` lists only
-`/usr/local/bin`, the cryptex paths, `/usr/bin`, `/bin`, `/usr/sbin` and
-`/sbin`, and nothing in `/etc/paths.d` adds it. So if `claude-tabs` comes back
-as `command not found`, add it and reload:
+`~/.local/bin` is **not** on the default PATH that macOS assembles from
+`/etc/paths` and `/etc/paths.d`. So if `claude-tabs` comes back as `command not
+found`, add it and reload:
 
 ```sh
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc && exec zsh
 ```
+
+Run that once. `>>` appends, so running it again just leaves a duplicate export
+line: harmless, but there is nothing to gain from it.
 
 Prefer not to touch your shell config? Symlink into `/usr/local/bin` instead,
 which is on the default PATH, though writing there needs `sudo` unless Homebrew
