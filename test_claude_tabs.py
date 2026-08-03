@@ -817,6 +817,8 @@ class TestMatchMarkers(TranscriptFixture):
         self.assertEqual(len(set(ct.MATCH_MARK.values())), len(ct.MATCH_MARK),
                          "two states share a marker")
 
+    @unittest.skipIf(not __debug__,
+                     "the claim() guard is an assert, stripped under -O")
     def test_claim_refuses_a_state_with_no_marker(self):
         """Guards addition, which is how the title-global gap arose.
 
