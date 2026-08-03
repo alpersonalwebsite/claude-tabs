@@ -204,6 +204,10 @@ by tmux. Before that was used, the single tmux tab fell back to an mtime guess.
   That is the second AppleScript gap; `tab color` is the first.
 - `--json` and `--save` include prompt text, so treat that output as
   conversation content rather than metadata.
+- The JSON schema changed in 1.2.0. `claude.attached` was `direct` or `nested`
+  and is now `direct`, `tmux` or `env`, and `claude.tmux` is a new key carrying
+  the tmux session, window, pane and visibility when that route applied. Anything
+  matching on `nested` needs updating.
 - Requires Automation permission for iTerm2 for whichever terminal runs it. The
   first run raises the macOS prompt.
 - A tab is reported as running Claude only while the process is alive. Closed

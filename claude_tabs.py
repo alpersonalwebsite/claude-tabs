@@ -24,6 +24,7 @@ import argparse
 import json
 import os
 import re
+import socket
 import subprocess
 import sys
 import time
@@ -427,6 +428,19 @@ def short_tty(tty):
     return (tty or "").replace("/dev/", "")
 
 
+def is_default_pane_title(title):
+    """True when tmux is reporting its own fallback rather than a real title.
+
+    tmux seeds pane_title with the machine's hostname, so a pane whose program
+    has not set a title reports that. Measured on a scratch server: a pane
+    running `sleep` reports the hostname verbatim. Letting that through would
+    replace a tab's real name with the machine name, which is worse than not
+    overriding at all.
+    """
+    host = socket.gethostname()
+    return (title or "") in ("", host, host.split(".")[0])
+
+
 def tmux_panes():
     """short tty -> tmux pane facts, for every pane on every tmux session.
 
@@ -473,11 +487,15 @@ def attribute_claudes(panes, procs, cpids, pane_of):
     """iTerm pane unique id -> [(pid, route, tmux facts or None)]."""
     by_tty = {short_tty(p["tty"]): p for p in panes}
     by_guid = {p["iterm_session_id"]: p for p in panes}
-    tpanes, tclients = tmux_panes(), tmux_clients()
+    # Consulted only when the direct route misses, so the common case where every
+    # claude sits on its own pane's tty spawns no tmux processes at all.
+    tpanes = tclients = None
     out = {}
     for pid in sorted(cpids):
         tty = procs[pid]["tty"]
         pane, route, tmux_info = by_tty.get(tty), "direct", None
+        if pane is None and tpanes is None:
+            tpanes, tclients = tmux_panes(), tmux_clients()
         if pane is None and tty in tpanes:
             facts = tpanes[tty]
             for client_tty in tclients.get(facts["session"], []):
@@ -804,7 +822,7 @@ def build_index():
                                       r[0]))
             pid, route, tmux_info = found[0]
             row["cwd"] = cwd_of.get(pid) or pane["shell_path"]
-            if tmux_info and tmux_info.get("title"):
+            if tmux_info and not is_default_pane_title(tmux_info.get("title")):
                 # The iTerm tab name is tmux's window name, which says nothing
                 # about the session. tmux kept the title Claude set, so use it
                 # and title matching works inside tmux too.

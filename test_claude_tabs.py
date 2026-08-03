@@ -10,6 +10,7 @@ Run with:  python3 -m unittest -v
 
 import contextlib
 import io
+import socket
 import json
 import os
 import shutil
@@ -847,6 +848,15 @@ class TestTmuxIntrospection(unittest.TestCase):
         self.assertTrue(panes["ttys095"]["visible"])
         self.assertFalse(panes["ttys096"]["visible"])
 
+
+    def test_default_hostname_title_is_recognised(self):
+        import socket
+        host = socket.gethostname()
+        for default in ("", host, host.split(".")[0]):
+            self.assertTrue(ct.is_default_pane_title(default), repr(default))
+        for real in ("Address CodeRabbit review comments", "proj", "vim"):
+            self.assertFalse(ct.is_default_pane_title(real), real)
+
     def test_clients_group_by_session(self):
         ct.run = lambda *a, **k: TMUX_CLIENTS_OUT
         self.assertEqual(ct.tmux_clients(),
@@ -890,6 +900,21 @@ class TestClaudeAttribution(unittest.TestCase):
         got = ct.attribute_claudes(self.PANES, procs, {300}, {300: "BBB"})
         # The env variable points at the wrong pane; the tty is authoritative.
         self.assertEqual(got, {"AAA": [(300, "direct", None)]})
+
+
+    def test_tmux_is_not_consulted_when_every_route_is_direct(self):
+        calls = []
+        ct.run = lambda cmd, **k: calls.append(cmd[0]) or ""
+        procs = self.procs([(300, "ttys001")])
+        ct.attribute_claudes(self.PANES, procs, {300}, {})
+        self.assertNotIn("tmux", calls,
+                         "tmux was queried even though the tty already matched")
+
+    def test_no_claude_processes_means_no_subprocesses(self):
+        calls = []
+        ct.run = lambda cmd, **k: calls.append(cmd[0]) or ""
+        self.assertEqual(ct.attribute_claudes(self.PANES, {}, set(), {}), {})
+        self.assertEqual(calls, [])
 
     def test_tmux_pane_resolves_through_its_client(self):
         procs = self.procs([(201, "ttys095")])
@@ -1048,15 +1073,62 @@ class TestVisibleTmuxPaneWins(TestBuildIndexWithTmux):
         self.assertEqual(cl["tmux"]["window"], "1")
         self.assertIn(202, cl["extra_pids"])
 
-    def test_a_hidden_pane_is_labelled_in_the_tree(self):
-        # Make the hidden one the only candidate for that pane.
+
+
+
+class TestHiddenOnlyTmuxPane(TestBuildIndexWithTmux):
+    """The tab's only claude sits in a tmux window that is not on screen."""
+
+    # 201 is gone, so 202 on ttys096 (window 2, not the active window) is the
+    # only candidate. Nothing is hand-edited: the row is selected and rendered
+    # by the real path.
+    PS = ("  100     1 01:00:00 ttys006 Ss+ tmux attach -t work\n"
+          "  200     1 00:30:00 ttys095 Ss  -zsh\n"
+          "  202   200 00:20:00 ttys096 S+  claude\n"
+          "  300     1 00:10:00 ttys001 S+  claude\n")
+    ENV = ("  202 claude ITERM_SESSION_ID=w0t0p0:%s\n"
+           "  300 claude ITERM_SESSION_ID=w0t0p0:%s\n" % (GUID_A, GUID_A))
+    LSOF = "p202\nn/Users/x/hidden\np300\nn/Users/x/direct\n"
+
+    def test_hidden_pane_is_selected_and_labelled(self):
         rows = ct.build_index()
         row = {r["tab_index"]: r for r in rows}[2]
-        row["claude"]["tmux"] = dict(row["claude"]["tmux"], visible=False)
+        cl = row["claude"]
+        self.assertEqual(cl["pid"], 202)
+        self.assertEqual(cl["attached"], "tmux")
+        self.assertFalse(cl["tmux"]["visible"])
+        self.assertEqual(row["title"], "Hidden Window")
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
-            ct.print_tree([row], ct.Paint(False))
+            ct.print_tree(rows, ct.Paint(False))
         self.assertIn("(hidden)", buf.getvalue())
+
+    def test_tmux_session_is_attributed_and_matched_by_title(self):
+        self.skipTest("inherited fixture assumes pid 201 is present")
+
+    def test_the_tmux_row_renders_its_coordinates(self):
+        self.skipTest("inherited fixture assumes pid 201 is present")
+
+
+class TestTmuxDefaultTitleDoesNotOverride(TestBuildIndexWithTmux):
+    """A tmux pane that has set no title reports the hostname."""
+
+    TPANES = US.join(["/dev/ttys095", "work", "1", "1", "1", "1",
+                      socket.gethostname()])
+
+    def test_hostname_title_leaves_the_tab_name_alone(self):
+        row = {r["tab_index"]: r for r in ct.build_index()}[2]
+        self.assertEqual(row["claude"]["attached"], "tmux",
+                         "attribution still works without a title")
+        # tmux's fallback title must not replace the tab's own name.
+        self.assertNotIn(socket.gethostname(), row["title"])
+        self.assertEqual(row["title"], "work")
+
+    def test_the_tmux_row_renders_its_coordinates(self):
+        self.skipTest("this fixture has no Claude-set title")
+
+    def test_tmux_session_is_attributed_and_matched_by_title(self):
+        self.skipTest("this fixture has no Claude-set title")
 
 
 class TestMatchMarkers(TranscriptFixture):
