@@ -22,13 +22,34 @@ Read-only except `--jump`, which activates a tab.
 ## Install
 
 ```sh
-git clone https://github.com/<owner>/claude-tabs.git
+git clone https://github.com/alpersonalwebsite/claude-tabs.git
 cd claude-tabs
-chmod +x claude_tabs.py
-ln -sfn "$PWD/claude_tabs.py" ~/.local/bin/claude-tabs   # or anywhere on PATH
+mkdir -p ~/.local/bin
+ln -sfn "$PWD/claude_tabs.py" ~/.local/bin/claude-tabs
 ```
 
-If you later move or rename the checkout, re-run that last line from the new
+`~/.local/bin` is **not** on the default PATH that macOS assembles from
+`/etc/paths` and `/etc/paths.d`. So if `claude-tabs` comes back as `command not
+found`, add it and reload:
+
+```sh
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc && exec zsh
+```
+
+Run that once. `>>` appends, so running it again just leaves a duplicate export
+line: harmless, but there is nothing to gain from it.
+
+Prefer not to touch your shell config? Symlink into `/usr/local/bin` instead,
+which is on the default PATH, though writing there needs `sudo` unless Homebrew
+already made it yours.
+
+No `chmod` step is needed. The file is committed executable (mode `100755`) and
+stays that way through both `git clone` and GitHub's "Download ZIP". The one
+exception is fetching the single file with `curl`, which lands it `644`: either
+`chmod +x claude_tabs.py` or run it as `python3 claude_tabs.py`, which needs no
+executable bit at all.
+
+If you later move or rename the checkout, re-run the `ln -sfn` line from the new
 location and you are done. Nothing else depends on where the code lives. Use
 `-sfn` rather than plain `-s`: `ln -s` fails with `File exists` when the link is
 already there, so it cannot repoint a stale one.
@@ -64,10 +85,10 @@ changes nothing (exit 2); no match exits 1.
 `--jump` briefly sets the target pane's background colour so you can see where
 it landed, then restores it. Restoring exactly is harder than it looks, because
 an AppleScript colour write quantizes: writing red `4273` reads back `4272`, and
-`4274` reads back `4274`. The value `4273` is simply not reachable by writing,
-yet that is exactly what every untouched pane here sits at. So writing a
-recorded colour back is always at risk of landing a unit off, and repeating that
-walks the pane darker on every jump.
+`4274` reads back `4274`. During development `4273` was not reachable by writing
+at all, yet it was exactly what every untouched pane reported. So writing a
+recorded colour back always risks landing a unit off, and repeating that walks
+the pane darker on every jump.
 
 The restore therefore goes through **OSC 111**, the terminal's own "reset
 background to the profile default" escape, written to the pane's tty. There is
@@ -120,12 +141,13 @@ be identified by content. Three things make the naive approaches wrong:
   session into subdirectories, so it often disagrees with the pane's cwd. It is
   used only as a tiebreak, never as a filter.
 - **A resumed session is copied into several project directories.** One session
-  id here existed in four. Claims are tracked by both path and session id so two
-  panes cannot take two copies of the same session.
-- **Busy directories defeat mtime.** One directory here holds 134 transcripts
-  with 20 live sessions. Ranking by mtime alone assigns early tabs arbitrary
-  files and every later tab inherits the error. Every exact title match is
-  therefore settled first, everywhere, before any mtime guess is allowed.
+  id turned up in four of them. Claims are tracked by both path and session id,
+  so two panes cannot take two copies of the same session.
+- **Busy directories defeat mtime.** A single project directory can hold well
+  over a hundred transcripts, 134 in one case, with 20 of those sessions live.
+  Ranking by mtime alone assigns early tabs arbitrary files, and every later tab
+  inherits the error. Every exact title match is therefore settled first,
+  everywhere, before any mtime guess is allowed.
 
 ## Match quality markers
 
