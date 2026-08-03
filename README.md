@@ -5,7 +5,12 @@ process, and for each Claude Code session its title, transcript file, session
 id, git branch, idle time and first/last prompt.
 
 Stdlib Python 3 only (tested on the macOS system Python, 3.9.6), macOS only.
-Read-only except `--jump`, which activates a tab.
+
+Almost entirely read-only. Three exceptions: `--jump` selects a tab and briefly
+tints it, `--save` writes the file you name, and **any** invocation may repaint a
+pane and rewrite `~/.cache/claude-tabs/flash-state.json` if a previous `--jump`
+was interrupted before it could restore the colour. Nothing else is touched, and
+your transcripts are only ever read.
 
 ## Requirements
 
@@ -186,6 +191,33 @@ cross-check of each process's tty against its pane agreed with the
   sessions live on in `~/.claude/projects` but have no tab.
 - A `claude` running inside tmux is attributed to whichever pane started the
   tmux server, and is marked `nested`. See the match quality markers above.
+
+## Tests
+
+```sh
+python3 -m unittest discover -p 'test_*.py' -v
+```
+
+Stdlib `unittest`, no dependencies. The tests are hermetic: they never invoke
+AppleScript, never touch the real `~/.claude/projects` or
+`~/.cache/claude-tabs`, and need no running iTerm2. Anything that would shell out
+is either pointed at a temporary directory or replaced, so they are safe to run
+while you have live sessions open.
+
+`--jump` is the only code path that deliberately changes iTerm state, so its
+contract is pinned:
+no match exits 1, an ambiguous pattern lists the candidates and changes nothing
+(exit 2), and the rule that a single Claude tab wins over matching plain shells
+is tested in both directions. It reaches the outside world only through two
+module-level functions, which the tests replace, so no tab is ever activated.
+
+The transcript resolver is the other part worth guarding, and most of the rest of
+the suite covers it: title matching beating a newer unrelated transcript, twenty
+live sessions in one directory each ending up with their own file, a recorded cwd
+that has drifted into a subdirectory still matching, the mtime and weak
+fallbacks, the global pass for a session resumed elsewhere, and two panes being
+unable to claim two copies of one session id. The flash tests assert the recorded
+colour is reused rather than re-read, which is what stops a pane drifting darker.
 
 ## Licence
 

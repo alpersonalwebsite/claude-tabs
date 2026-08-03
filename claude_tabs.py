@@ -533,7 +533,11 @@ def scan_tail(path):
     # push every occurrence out of the window. Transcripts reach hundreds of
     # megabytes, so scan the whole file with grep rather than in Python.
     if info["ai_title"] is None and st.st_size > TAIL_BYTES:
-        out = run(["grep", "-o", "-a", '"aiTitle":"[^"]*"', path], timeout=120)
+        # Claude writes compact JSON, but JSON allows whitespace after the
+        # colon, so do not depend on its absence. Space and tab are the whole
+        # surface: a newline cannot occur mid-record in JSONL.
+        out = run(["grep", "-o", "-a", '"aiTitle":[[:space:]]*"[^"]*"', path],
+                  timeout=120)
         lines = out.splitlines()
         if lines:
             try:

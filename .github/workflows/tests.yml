@@ -1,0 +1,47 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Defence in depth: the repository default is already read-only, but pinning it
+# here keeps that true if the repository setting ever changes.
+permissions:
+  contents: read
+
+# A force-push should replace the in-flight run rather than queue behind it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unittest:
+    # macOS because that is the only platform the tool supports. The tests
+    # themselves never invoke AppleScript, so they do not need a real iTerm2.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # checkout leaves GITHUB_TOKEN in the local git config by default, so
+          # anything that runs afterwards can use it. This job only reads the
+          # tree and runs tests, so it never needs those credentials.
+          persist-credentials: false
+      - name: Show interpreters
+        run: |
+          echo "runner python3: $(python3 --version) at $(command -v python3)"
+          echo "system python3: $(/usr/bin/python3 --version)"
+      # Both interpreters, on purpose. The system Python is the floor the README
+      # promises and the version most users will have; the runner toolchain is
+      # far newer. Testing only one end leaves the other unproven, and the whole
+      # suite runs in well under a second, so there is nothing to save by
+      # picking. Keep both steps if the versions above ever diverge further.
+      - name: Run tests on the system interpreter
+        run: /usr/bin/python3 -m unittest discover -p 'test_*.py' -v
+      - name: Run tests on the runner interpreter
+        run: python3 -m unittest discover -p 'test_*.py'
+      - name: Check the CLI starts
+        run: |
+          test -x claude_tabs.py
+          ./claude_tabs.py --version
+          ./claude_tabs.py --help > /dev/null
