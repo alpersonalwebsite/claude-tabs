@@ -247,6 +247,12 @@ class TranscriptFixture(unittest.TestCase):
             os.utime(path, (mtime, mtime))
         return path
 
+    def assertMatch(self, row, expected):
+        """Assert the match state, and that it is renderable at all."""
+        self.assertEqual(row["claude"]["match"], expected)
+        self.assertIn(row["claude"]["match"], ct.MATCH_MARK,
+                      "match state has no marker, so it renders as a blank")
+
     @staticmethod
     def claude_row(cwd, title, started_at=None, tab=1):
         return {
@@ -382,7 +388,7 @@ class TestStore(TranscriptFixture):
         self.assertTrue(store.is_free(p))
         store.claim(store.summary(p), row, "title")
         self.assertFalse(store.is_free(p))
-        self.assertEqual(row["claude"]["match"], "title")
+        self.assertMatch(row, "title")
         self.assertEqual(row["claude"]["session"]["session_id"], "sid1")
 
     def test_pick_prefers_the_matching_project_directory(self):
@@ -406,7 +412,7 @@ class TestResolver(TranscriptFixture):
         row = self.claude_row("/Users/x/p", "The Real Work",
                               started_at=now - 1000)
         ct.resolve_transcripts([row], use_global=False)
-        self.assertEqual(row["claude"]["match"], "title")
+        self.assertMatch(row, "title")
         self.assertEqual(row["claude"]["session"]["session_id"], "right")
 
     def test_busy_directory_gives_every_tab_its_own_transcript(self):
@@ -425,7 +431,7 @@ class TestResolver(TranscriptFixture):
                                         started_at=now - 5000, tab=i + 1))
         ct.resolve_transcripts(rows, use_global=False)
         for i, row in enumerate(rows):
-            self.assertEqual(row["claude"]["match"], "title")
+            self.assertMatch(row, "title")
             self.assertEqual(row["claude"]["session"]["session_id"],
                              "sid%02d" % i)
         ids = [r["claude"]["session"]["session_file"] for r in rows]
@@ -439,7 +445,7 @@ class TestResolver(TranscriptFixture):
                               mtime=now - 10, recorded_cwd="/Users/x/p/sub/dir")
         row = self.claude_row("/Users/x/p", "Drifted", started_at=now - 100)
         ct.resolve_transcripts([row], use_global=False)
-        self.assertEqual(row["claude"]["match"], "title")
+        self.assertMatch(row, "title")
         self.assertEqual(row["claude"]["session"]["session_id"], "s1")
 
     def test_mtime_fallback_when_the_title_cannot_match(self):
@@ -450,7 +456,7 @@ class TestResolver(TranscriptFixture):
                               mtime=now - 5)
         row = self.claude_row("/Users/x/p", "proj", started_at=now - 100)
         ct.resolve_transcripts([row], use_global=False)
-        self.assertEqual(row["claude"]["match"], "mtime")
+        self.assertMatch(row, "mtime")
         self.assertEqual(row["claude"]["session"]["session_id"], "s1")
 
     def test_weak_marker_when_nothing_was_written_since_launch(self):
@@ -459,12 +465,12 @@ class TestResolver(TranscriptFixture):
                               mtime=now - 90000)
         row = self.claude_row("/Users/x/p", "untitled thing", started_at=now - 60)
         ct.resolve_transcripts([row], use_global=False)
-        self.assertEqual(row["claude"]["match"], "weak")
+        self.assertMatch(row, "weak")
 
     def test_no_transcript_at_all_stays_unmatched(self):
         row = self.claude_row("/Users/x/empty", "Nothing Yet")
         ct.resolve_transcripts([row], use_global=False)
-        self.assertEqual(row["claude"]["match"], "none")
+        self.assertMatch(row, "none")
         self.assertIsNone(row["claude"]["session"])
 
     def test_global_pass_finds_a_session_resumed_elsewhere(self):
@@ -476,7 +482,7 @@ class TestResolver(TranscriptFixture):
         row = self.claude_row("/Users/x/elsewhere", "Ported Work",
                               started_at=now - 60)
         ct.resolve_transcripts([row], use_global=True)
-        self.assertEqual(row["claude"]["match"], "title-global")
+        self.assertMatch(row, "title-global")
         self.assertEqual(row["claude"]["session"]["session_id"], "moved")
 
     def test_global_pass_can_be_disabled(self):
@@ -486,7 +492,7 @@ class TestResolver(TranscriptFixture):
         row = self.claude_row("/Users/x/elsewhere", "Ported Work",
                               started_at=now - 60)
         ct.resolve_transcripts([row], use_global=False)
-        self.assertEqual(row["claude"]["match"], "none")
+        self.assertMatch(row, "none")
 
     def test_two_panes_cannot_claim_two_copies_of_one_session(self):
         now = time.time()
@@ -750,6 +756,35 @@ class TestFlashState(unittest.TestCase):
 
 
 class TestRendering(TranscriptFixture):
+    def test_tree_marks_a_global_title_match_distinctly(self):
+        # Resolved from another project directory, so it must not render as a
+        # plain local exact match.
+        now = time.time()
+        self.write_transcript("/Users/x/origin", "moved", "Ported Work", ["a"],
+                              mtime=now - 5)
+        row = self.claude_row("/Users/x/elsewhere", "Ported Work",
+                              started_at=now - 60)
+        ct.resolve_transcripts([row], use_global=True)
+        self.assertMatch(row, "title-global")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            ct.print_tree([row], ct.Paint(False))
+        out = buf.getvalue()
+        self.assertIn(ct.MATCH_MARK["title-global"], out)
+        self.assertIn("Ported Work", out)
+
+    def test_markdown_omits_the_marker_column(self):
+        # The marker is a tree-view affordance; --md has no column for it.
+        self.write_transcript("/Users/x/p", "s1", "Local Work", ["a"])
+        row = self.claude_row("/Users/x/p", "Local Work")
+        ct.resolve_transcripts([row], use_global=False)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            ct.print_markdown([row])
+        header = buf.getvalue().splitlines()[0]
+        self.assertNotIn("Marker", header)
+        self.assertIn("Claude session", header)
+
     def test_markdown_and_tree_render_both_kinds_of_row(self):
         self.write_transcript("/Users/x/p", "s1", "Audit the tokens", ["go"])
         claude = self.claude_row("/Users/x/p", "Audit the tokens")
@@ -774,6 +809,127 @@ class TestRendering(TranscriptFixture):
         with contextlib.redirect_stdout(buf):
             ct.print_markdown(rows)
         self.assertIn("_zsh_", buf.getvalue())
+
+
+class TestMatchMarkers(TranscriptFixture):
+    def test_markers_are_distinct(self):
+        """Guards deletion and collision, but not addition: see below."""
+        self.assertEqual(len(set(ct.MATCH_MARK.values())), len(ct.MATCH_MARK),
+                         "two states share a marker")
+
+    @unittest.skipIf(not __debug__,
+                     "the claim() guard is an assert, stripped under -O")
+    def test_claim_refuses_a_state_with_no_marker(self):
+        """Guards addition, which is how the title-global gap arose.
+
+        A hardcoded list of states in a test only knows what the test knows, so
+        renaming or adding a resolver label slips past it. claim() is the single
+        funnel every non-none state passes through, so the invariant lives there
+        and cannot drift from the resolver.
+        """
+        path = self.write_transcript("/Users/x/p", "s1", "T", ["a"])
+        store = ct.TranscriptStore()
+        row = self.claude_row("/Users/x/p", "T")
+        with self.assertRaises(AssertionError):
+            store.claim(store.summary(path), row, "invented-state")
+        # A real state is accepted.
+        store.claim(store.summary(path), row, "title")
+        self.assertMatch(row, "title")
+
+
+class TestViewSelection(TranscriptFixture):
+    """--idle and --sort, extracted from main() so they can be tested."""
+
+    def rows(self, now):
+        claude_old = self.claude_row("/Users/x/zzz-old", "Old Work", tab=1)
+        claude_old["claude"]["session"] = {"mtime": now - 7200, "ai_title": "Old Work"}
+        claude_new = self.claude_row("/Users/x/aaa-new", "New Work", tab=2)
+        claude_new["claude"]["session"] = {"mtime": now - 60, "ai_title": "New Work"}
+        shell = self.claude_row("/Users/x/mmm-shell", "~ (-zsh)", tab=3)
+        shell["claude"] = None
+        return [claude_old, claude_new, shell]
+
+    def test_claude_only_drops_plain_shells(self):
+        now = time.time()
+        view = ct.select_rows(self.rows(now), claude_only=True, now=now)
+        self.assertEqual([r["tab_index"] for r in view], [1, 2])
+
+    def test_idle_keeps_only_sessions_past_the_cutoff(self):
+        now = time.time()
+        view = ct.select_rows(self.rows(now), idle_minutes=60, now=now)
+        self.assertEqual([r["tab_index"] for r in view], [1])
+        # A shell tab has no session to age, so --idle excludes it outright.
+        self.assertTrue(all(r["claude"] for r in view))
+
+    def test_idle_zero_keeps_every_session_but_no_shells(self):
+        now = time.time()
+        view = ct.select_rows(self.rows(now), idle_minutes=0, now=now)
+        self.assertEqual([r["tab_index"] for r in view], [1, 2])
+
+    def test_sort_idle_puts_the_stalest_first(self):
+        # Feed it newest-first, so the sort has to do real work. With the fixture
+        # order the input is already stalest-first and deleting the sort passes.
+        now = time.time()
+        given = list(reversed(self.rows(now)))
+        view = ct.select_rows(given, claude_only=True, sort="idle", now=now)
+        self.assertEqual([r["tab_index"] for r in view], [1, 2])
+
+    def test_sort_path_is_alphabetical_by_directory(self):
+        now = time.time()
+        view = ct.select_rows(self.rows(now), sort="path", now=now)
+        self.assertEqual([r["cwd"] for r in view],
+                         ["/Users/x/aaa-new", "/Users/x/mmm-shell",
+                          "/Users/x/zzz-old"])
+
+    def test_sort_window_is_the_default_and_preserves_order(self):
+        now = time.time()
+        given = self.rows(now)
+        self.assertEqual([r["tab_index"] for r in ct.select_rows(given, now=now)],
+                         [1, 2, 3])
+
+    def test_grep_filters_and_combines_with_the_others(self):
+        now = time.time()
+        rx = ct.compile_pattern("work", "--grep")
+        view = ct.select_rows(self.rows(now), grep=rx, now=now)
+        self.assertEqual([r["tab_index"] for r in view], [1, 2])
+        view = ct.select_rows(self.rows(now), grep=rx, idle_minutes=60,
+                              sort="idle", now=now)
+        self.assertEqual([r["tab_index"] for r in view], [1])
+
+    def test_the_callers_list_is_never_reordered(self):
+        # `view = rows` followed by view.sort() used to reorder the input.
+        now = time.time()
+        given = self.rows(now)
+        before = list(given)
+        ct.select_rows(given, sort="path", now=now)
+        self.assertEqual(given, before)
+
+
+class TestIndexPayload(TranscriptFixture):
+    def test_shape_and_json_round_trip(self):
+        self.write_transcript("/Users/x/p", "s1", "Titled", ["go"])
+        row = self.claude_row("/Users/x/p", "Titled")
+        ct.resolve_transcripts([row], use_global=False)
+        payload = ct.index_payload([row], now=1234.5)
+        self.assertEqual(sorted(payload), ["generated_at", "tabs"])
+        self.assertEqual(payload["generated_at"], 1234.5)
+        self.assertEqual(len(payload["tabs"]), 1)
+
+        # Everything the resolver attaches has to survive json.dumps, including
+        # the session dict, or --save and --json break on real data.
+        restored = json.loads(json.dumps(payload))
+        tab = restored["tabs"][0]
+        for key in ("window_id", "tab_index", "cwd", "title", "claude"):
+            self.assertIn(key, tab)
+        for key in ("session_id", "ai_title", "first_prompt", "mtime",
+                    "entries", "git_branch", "session_file"):
+            self.assertIn(key, tab["claude"]["session"])
+        self.assertEqual(tab["claude"]["match"], "title")
+
+    def test_generated_at_defaults_to_now(self):
+        payload = ct.index_payload([])
+        self.assertAlmostEqual(payload["generated_at"], time.time(), delta=5)
+        self.assertEqual(payload["tabs"], [])
 
 
 class TestCommandLine(unittest.TestCase):

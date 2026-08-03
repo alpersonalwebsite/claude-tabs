@@ -83,7 +83,12 @@ already there, so it cannot repoint a stale one.
 | `claude-tabs --version` | Prints the version |
 
 Flags combine: `--claude-only --idle 60 --sort idle` is the "what did I abandon"
-list, and `--save` works alongside any view.
+list.
+
+`--save` always writes the complete index, even when the terminal output is
+filtered, so a `--grep` does not silently truncate the file you hand to another
+tool. `--json` does follow the filters. Both are ignored alongside `--jump`,
+which navigates rather than reporting and returns before any output is written.
 
 `--jump` refuses to guess. If the regex matches several tabs it lists them and
 changes nothing (exit 2); no match exits 1.
@@ -166,15 +171,15 @@ match value instead.
 | Marker | Meaning |
 |---|---|
 | (blank) | exact: pane title equals the transcript's current `ai-title` |
+| `*` | exact, but the transcript was found outside the pane's own project directory, which is how a session resumed from elsewhere is located |
 | `~` | mtime guess: newest unclaimed transcript for that directory, written since the process started |
 | `?` | weak: newest unclaimed transcript, but not written since the process started |
 | `!` | no transcript found (normal for a session that has had no prompt yet) |
 
-A blank marker covers both kinds of exact match: one found in the pane's own
-project directory, and one found by the search across all recently touched
-directories, which is how a session resumed from somewhere else is located. They
-are not distinguished because the confidence is identical; only the location
-differs.
+A blank and a `*` are equally confident: both are exact `ai-title` matches, and
+only the location differs. `*` is worth surfacing because a transcript sitting
+outside the pane's own project directory usually means the session was resumed
+from somewhere else.
 
 `nested(ttysNNN)` after the metadata means the claude process is not on the
 pane's own tty, which happens inside tmux: `ITERM_SESSION_ID` is inherited from
