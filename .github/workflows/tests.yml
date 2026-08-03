@@ -1,0 +1,23 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  unittest:
+    # macOS because that is the only platform the tool supports. The tests
+    # themselves never invoke AppleScript, so they do not need a real iTerm2.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Show interpreter
+        run: python3 --version
+      - name: Run tests
+        run: python3 -m unittest discover -p 'test_*.py' -v
+      - name: Check the CLI starts
+        run: |
+          test -x claude_tabs.py
+          ./claude_tabs.py --version
+          ./claude_tabs.py --help > /dev/null

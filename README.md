@@ -187,6 +187,26 @@ cross-check of each process's tty against its pane agreed with the
 - A `claude` running inside tmux is attributed to whichever pane started the
   tmux server, and is marked `nested`. See the match quality markers above.
 
+## Tests
+
+```sh
+python3 -m unittest discover -p 'test_*.py' -v
+```
+
+Stdlib `unittest`, no dependencies. The tests are hermetic: they never invoke
+AppleScript, never touch the real `~/.claude/projects` or
+`~/.cache/claude-tabs`, and need no running iTerm2. Anything that would shell out
+is either pointed at a temporary directory or replaced, so they are safe to run
+while you have live sessions open.
+
+The transcript resolver is the part worth guarding, so most of the suite covers
+it: title matching beating a newer unrelated transcript, twenty live sessions in
+one directory each ending up with their own file, a recorded cwd that has drifted
+into a subdirectory still matching, the mtime and weak fallbacks, the global pass
+for a session resumed elsewhere, and two panes being unable to claim two copies
+of one session id. The flash tests assert the recorded colour is reused rather
+than re-read, which is what stops a pane drifting darker.
+
 ## Licence
 
 MIT. See [LICENSE](LICENSE).
