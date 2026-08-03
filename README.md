@@ -24,12 +24,30 @@ Read-only except `--jump`, which activates a tab.
 ```sh
 git clone https://github.com/alpersonalwebsite/claude-tabs.git
 cd claude-tabs
-chmod +x claude_tabs.py
 mkdir -p ~/.local/bin
-ln -sfn "$PWD/claude_tabs.py" ~/.local/bin/claude-tabs   # or anywhere on PATH
+ln -sfn "$PWD/claude_tabs.py" ~/.local/bin/claude-tabs
 ```
 
-If you later move or rename the checkout, re-run that last line from the new
+`~/.local/bin` is **not** on the default macOS PATH. `/etc/paths` lists only
+`/usr/local/bin`, the cryptex paths, `/usr/bin`, `/bin`, `/usr/sbin` and
+`/sbin`, and nothing in `/etc/paths.d` adds it. So if `claude-tabs` comes back
+as `command not found`, add it and reload:
+
+```sh
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc && exec zsh
+```
+
+Prefer not to touch your shell config? Symlink into `/usr/local/bin` instead,
+which is on the default PATH, though writing there needs `sudo` unless Homebrew
+already made it yours.
+
+No `chmod` step is needed. The file is committed executable (mode `100755`) and
+stays that way through both `git clone` and GitHub's "Download ZIP". The one
+exception is fetching the single file with `curl`, which lands it `644`: either
+`chmod +x claude_tabs.py` or run it as `python3 claude_tabs.py`, which needs no
+executable bit at all.
+
+If you later move or rename the checkout, re-run the `ln -sfn` line from the new
 location and you are done. Nothing else depends on where the code lives. Use
 `-sfn` rather than plain `-s`: `ln -s` fails with `File exists` when the link is
 already there, so it cannot repoint a stale one.
