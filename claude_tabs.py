@@ -12,7 +12,12 @@ How the pieces are joined:
     the pane title is that pane's transcript. No claude process holds its
     .jsonl open, so this title match (with an mtime fallback) is the join.
 
-Stdlib only, macOS only. Read-only except --jump, which activates a tab.
+Stdlib only, macOS only.
+
+Almost entirely read-only. Three exceptions: --jump selects a tab and briefly
+tints it, --save writes the file you name, and any invocation may repaint a pane
+and rewrite the flash-state cache if an earlier --jump was interrupted before it
+could restore the colour. Transcripts are only ever read.
 """
 
 import argparse
