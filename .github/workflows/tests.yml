@@ -22,6 +22,11 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          # checkout leaves GITHUB_TOKEN in the local git config by default, so
+          # anything that runs afterwards can use it. This job only reads the
+          # tree and runs tests, so it never needs those credentials.
+          persist-credentials: false
       - name: Show interpreters
         run: |
           echo "runner python3: $(python3 --version) at $(command -v python3)"

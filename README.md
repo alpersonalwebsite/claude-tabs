@@ -5,7 +5,12 @@ process, and for each Claude Code session its title, transcript file, session
 id, git branch, idle time and first/last prompt.
 
 Stdlib Python 3 only (tested on the macOS system Python, 3.9.6), macOS only.
-Read-only except `--jump`, which activates a tab.
+
+Almost entirely read-only. Three exceptions: `--jump` selects a tab and briefly
+tints it, `--save` writes the file you name, and **any** invocation may repaint a
+pane and rewrite `~/.cache/claude-tabs/flash-state.json` if a previous `--jump`
+was interrupted before it could restore the colour. Nothing else is touched, and
+your transcripts are only ever read.
 
 ## Requirements
 
@@ -199,7 +204,8 @@ AppleScript, never touch the real `~/.claude/projects` or
 is either pointed at a temporary directory or replaced, so they are safe to run
 while you have live sessions open.
 
-`--jump` is the only code path that changes anything, so its contract is pinned:
+`--jump` is the only code path that deliberately changes iTerm state, so its
+contract is pinned:
 no match exits 1, an ambiguous pattern lists the candidates and changes nothing
 (exit 2), and the rule that a single Claude tab wins over matching plain shells
 is tested in both directions. It reaches the outside world only through two

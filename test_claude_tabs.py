@@ -290,26 +290,23 @@ class TestTranscriptScanning(TranscriptFixture):
         # scan_tail falls back to grepping the whole file.
         path = self.write_transcript("/Users/x/proj", "s1", "Buried title",
                                      ["p"])
-        with open(path, "a") as fh:
-            for i in range(200):
-                fh.write(json.dumps({"type": "system", "sessionId": "s1",
-                                     "filler": "x" * 200}) + "\n")
+        self._append_filler(path, "s1")
         compact = self.write_transcript("/Users/x/proj2", "s2", "Compact title",
                                         ["p"], compact=True)
-        with open(compact, "a") as fh:
-            for i in range(200):
-                fh.write(json.dumps({"type": "system", "sessionId": "s2",
-                                     "filler": "x" * 200}) + "\n")
-        original = ct.TAIL_BYTES
-        try:
-            ct.TAIL_BYTES = 1024
-            info = ct.scan_tail(path)
-            info_compact = ct.scan_tail(compact)
-        finally:
-            ct.TAIL_BYTES = original
+        self._append_filler(compact, "s2")
+        info = self._scan_with_small_tail(path)
+        info_compact = self._scan_with_small_tail(compact)
         # JSON permits whitespace after the colon; Claude omits it. Both must work.
         self.assertEqual(info["ai_title"], "Buried title")
         self.assertEqual(info_compact["ai_title"], "Compact title")
+
+    @staticmethod
+    def _append_filler(path, session_id, lines=200):
+        """Pad a transcript so its ai-title falls outside the tail window."""
+        with open(path, "a") as fh:
+            for _ in range(lines):
+                fh.write(json.dumps({"type": "system", "sessionId": session_id,
+                                     "filler": "x" * 200}) + "\n")
 
     def _buried_title_file(self, name, title_fragment):
         """A file whose only ai-title sits outside the tail window."""
@@ -318,8 +315,7 @@ class TestTranscriptScanning(TranscriptFixture):
             fh.write('{"type":"user","sessionId":"s",'
                      '"message":{"content":"p"}}\n')
             fh.write('{"type":"ai-title",%s,"sessionId":"s"}\n' % title_fragment)
-            for _ in range(200):
-                fh.write(json.dumps({"type": "system", "filler": "x" * 200}) + "\n")
+        self._append_filler(path, "s")
         return path
 
     def _scan_with_small_tail(self, path):
