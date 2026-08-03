@@ -5,7 +5,8 @@ process, and for each Claude Code session its title, transcript file, session
 id, git branch, idle time and first/last prompt.
 
 Stdlib Python 3 only, macOS only. CI runs the tests on both the macOS system
-Python (3.9.6) and a current release (3.14.6).
+Python (3.9.6) and the current release on the GitHub macOS runner (3.14.x at the
+time of writing).
 
 Almost entirely read-only. Three exceptions: `--jump` selects a tab and briefly
 tints it, `--save` writes the file you name, and **any** invocation may repaint a
@@ -18,8 +19,9 @@ your transcripts are only ever read.
 - macOS with iTerm2. Developed against 3.6.11; the code works around two
   AppleScript gaps in that version, noted below.
 - Python 3.7 or newer, which the macOS system Python satisfies. No packages to
-  install, nothing to build. (3.7 is the floor because of
-  `subprocess.run(capture_output=...)`. CI exercises 3.9.6 and 3.14.6.)
+  install, nothing to build. 3.7 is the documented floor, set by
+  `subprocess.run(capture_output=...)`; the oldest version actually exercised is
+  3.9.6.
 - Claude Code, if you want the session columns. Without it the tool still
   indexes windows, tabs, paths and foreground processes.
 - Automation permission for iTerm2, for whichever terminal you run it from.
@@ -157,14 +159,22 @@ be identified by content. Three things make the naive approaches wrong:
 
 ## Match quality markers
 
-The column after the title flags how confidently the transcript was identified.
+The column after the title flags how confidently the transcript was identified,
+in the default tree view. `--md` omits the column, and `--json` carries the raw
+match value instead.
 
 | Marker | Meaning |
 |---|---|
-| (blank) | exact: pane title equals the transcript's current `ai-title`, whether that transcript was found in the pane's own project directory or, for a session resumed from elsewhere, by the search across all recently touched directories |
+| (blank) | exact: pane title equals the transcript's current `ai-title` |
 | `~` | mtime guess: newest unclaimed transcript for that directory, written since the process started |
 | `?` | weak: newest unclaimed transcript, but not written since the process started |
 | `!` | no transcript found (normal for a session that has had no prompt yet) |
+
+A blank marker covers both kinds of exact match: one found in the pane's own
+project directory, and one found by the search across all recently touched
+directories, which is how a session resumed from somewhere else is located. They
+are not distinguished because the confidence is identical; only the location
+differs.
 
 `nested(ttysNNN)` after the metadata means the claude process is not on the
 pane's own tty, which happens inside tmux: `ITERM_SESSION_ID` is inherited from
