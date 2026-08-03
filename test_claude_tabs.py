@@ -247,6 +247,12 @@ class TranscriptFixture(unittest.TestCase):
             os.utime(path, (mtime, mtime))
         return path
 
+    def assertMatch(self, row, expected):
+        """Assert the match state, and that it is renderable at all."""
+        self.assertEqual(row["claude"]["match"], expected)
+        self.assertIn(row["claude"]["match"], ct.MATCH_MARK,
+                      "match state has no marker, so it renders as a blank")
+
     @staticmethod
     def claude_row(cwd, title, started_at=None, tab=1):
         return {
@@ -382,7 +388,7 @@ class TestStore(TranscriptFixture):
         self.assertTrue(store.is_free(p))
         store.claim(store.summary(p), row, "title")
         self.assertFalse(store.is_free(p))
-        self.assertEqual(row["claude"]["match"], "title")
+        self.assertMatch(row, "title")
         self.assertEqual(row["claude"]["session"]["session_id"], "sid1")
 
     def test_pick_prefers_the_matching_project_directory(self):
@@ -406,7 +412,7 @@ class TestResolver(TranscriptFixture):
         row = self.claude_row("/Users/x/p", "The Real Work",
                               started_at=now - 1000)
         ct.resolve_transcripts([row], use_global=False)
-        self.assertEqual(row["claude"]["match"], "title")
+        self.assertMatch(row, "title")
         self.assertEqual(row["claude"]["session"]["session_id"], "right")
 
     def test_busy_directory_gives_every_tab_its_own_transcript(self):
@@ -425,7 +431,7 @@ class TestResolver(TranscriptFixture):
                                         started_at=now - 5000, tab=i + 1))
         ct.resolve_transcripts(rows, use_global=False)
         for i, row in enumerate(rows):
-            self.assertEqual(row["claude"]["match"], "title")
+            self.assertMatch(row, "title")
             self.assertEqual(row["claude"]["session"]["session_id"],
                              "sid%02d" % i)
         ids = [r["claude"]["session"]["session_file"] for r in rows]
@@ -439,7 +445,7 @@ class TestResolver(TranscriptFixture):
                               mtime=now - 10, recorded_cwd="/Users/x/p/sub/dir")
         row = self.claude_row("/Users/x/p", "Drifted", started_at=now - 100)
         ct.resolve_transcripts([row], use_global=False)
-        self.assertEqual(row["claude"]["match"], "title")
+        self.assertMatch(row, "title")
         self.assertEqual(row["claude"]["session"]["session_id"], "s1")
 
     def test_mtime_fallback_when_the_title_cannot_match(self):
@@ -450,7 +456,7 @@ class TestResolver(TranscriptFixture):
                               mtime=now - 5)
         row = self.claude_row("/Users/x/p", "proj", started_at=now - 100)
         ct.resolve_transcripts([row], use_global=False)
-        self.assertEqual(row["claude"]["match"], "mtime")
+        self.assertMatch(row, "mtime")
         self.assertEqual(row["claude"]["session"]["session_id"], "s1")
 
     def test_weak_marker_when_nothing_was_written_since_launch(self):
@@ -459,12 +465,12 @@ class TestResolver(TranscriptFixture):
                               mtime=now - 90000)
         row = self.claude_row("/Users/x/p", "untitled thing", started_at=now - 60)
         ct.resolve_transcripts([row], use_global=False)
-        self.assertEqual(row["claude"]["match"], "weak")
+        self.assertMatch(row, "weak")
 
     def test_no_transcript_at_all_stays_unmatched(self):
         row = self.claude_row("/Users/x/empty", "Nothing Yet")
         ct.resolve_transcripts([row], use_global=False)
-        self.assertEqual(row["claude"]["match"], "none")
+        self.assertMatch(row, "none")
         self.assertIsNone(row["claude"]["session"])
 
     def test_global_pass_finds_a_session_resumed_elsewhere(self):
@@ -476,7 +482,7 @@ class TestResolver(TranscriptFixture):
         row = self.claude_row("/Users/x/elsewhere", "Ported Work",
                               started_at=now - 60)
         ct.resolve_transcripts([row], use_global=True)
-        self.assertEqual(row["claude"]["match"], "title-global")
+        self.assertMatch(row, "title-global")
         self.assertEqual(row["claude"]["session"]["session_id"], "moved")
 
     def test_global_pass_can_be_disabled(self):
@@ -486,7 +492,7 @@ class TestResolver(TranscriptFixture):
         row = self.claude_row("/Users/x/elsewhere", "Ported Work",
                               started_at=now - 60)
         ct.resolve_transcripts([row], use_global=False)
-        self.assertEqual(row["claude"]["match"], "none")
+        self.assertMatch(row, "none")
 
     def test_two_panes_cannot_claim_two_copies_of_one_session(self):
         now = time.time()
@@ -759,7 +765,7 @@ class TestRendering(TranscriptFixture):
         row = self.claude_row("/Users/x/elsewhere", "Ported Work",
                               started_at=now - 60)
         ct.resolve_transcripts([row], use_global=True)
-        self.assertEqual(row["claude"]["match"], "title-global")
+        self.assertMatch(row, "title-global")
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             ct.print_tree([row], ct.Paint(False))
@@ -805,17 +811,28 @@ class TestRendering(TranscriptFixture):
         self.assertIn("_zsh_", buf.getvalue())
 
 
-class TestMatchMarkers(unittest.TestCase):
-    def test_every_match_state_has_a_marker(self):
-        """The gap this guards: five states, four markers, one rendering blank.
-
-        A state absent from MATCH_MARK falls through to the default blank, which
-        is indistinguishable from an exact local match.
-        """
-        states = {"title", "title-global", "mtime", "weak", "none"}
-        self.assertEqual(set(ct.MATCH_MARK), states)
-        self.assertEqual(len(set(ct.MATCH_MARK.values())), len(states),
+class TestMatchMarkers(TranscriptFixture):
+    def test_markers_are_distinct(self):
+        """Guards deletion and collision, but not addition: see below."""
+        self.assertEqual(len(set(ct.MATCH_MARK.values())), len(ct.MATCH_MARK),
                          "two states share a marker")
+
+    def test_claim_refuses_a_state_with_no_marker(self):
+        """Guards addition, which is how the title-global gap arose.
+
+        A hardcoded list of states in a test only knows what the test knows, so
+        renaming or adding a resolver label slips past it. claim() is the single
+        funnel every non-none state passes through, so the invariant lives there
+        and cannot drift from the resolver.
+        """
+        path = self.write_transcript("/Users/x/p", "s1", "T", ["a"])
+        store = ct.TranscriptStore()
+        row = self.claude_row("/Users/x/p", "T")
+        with self.assertRaises(AssertionError):
+            store.claim(store.summary(path), row, "invented-state")
+        # A real state is accepted.
+        store.claim(store.summary(path), row, "title")
+        self.assertMatch(row, "title")
 
 
 class TestViewSelection(TranscriptFixture):
@@ -848,8 +865,11 @@ class TestViewSelection(TranscriptFixture):
         self.assertEqual([r["tab_index"] for r in view], [1, 2])
 
     def test_sort_idle_puts_the_stalest_first(self):
+        # Feed it newest-first, so the sort has to do real work. With the fixture
+        # order the input is already stalest-first and deleting the sort passes.
         now = time.time()
-        view = ct.select_rows(self.rows(now), claude_only=True, sort="idle", now=now)
+        given = list(reversed(self.rows(now)))
+        view = ct.select_rows(given, claude_only=True, sort="idle", now=now)
         self.assertEqual([r["tab_index"] for r in view], [1, 2])
 
     def test_sort_path_is_alphabetical_by_directory(self):

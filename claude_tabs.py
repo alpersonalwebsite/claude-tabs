@@ -640,6 +640,11 @@ class TranscriptStore:
                 yield self.summary(path)
 
     def claim(self, info, row, match):
+        # Every reachable state must be renderable. A state with no MATCH_MARK
+        # entry falls through to a blank, which reads as an exact local match and
+        # hides the difference, so enforce it at the one funnel all states pass
+        # through rather than restating the list somewhere it can drift.
+        assert match in MATCH_MARK, "match state %r has no MATCH_MARK entry" % match
         self.claimed.add(info["session_file"])
         if info.get("session_id"):
             self.claimed_ids.add(info["session_id"])

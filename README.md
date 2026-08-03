@@ -87,7 +87,8 @@ list.
 
 `--save` always writes the complete index, even when the terminal output is
 filtered, so a `--grep` does not silently truncate the file you hand to another
-tool. `--json` does follow the filters.
+tool. `--json` does follow the filters. Both are ignored alongside `--jump`,
+which navigates rather than reporting and returns before any output is written.
 
 `--jump` refuses to guess. If the regex matches several tabs it lists them and
 changes nothing (exit 2); no match exits 1.
