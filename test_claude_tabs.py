@@ -8,6 +8,8 @@ pointed at a temporary directory or replaced.
 Run with:  python3 -m unittest -v
 """
 
+import contextlib
+import io
 import json
 import os
 import shutil
@@ -103,9 +105,13 @@ class TestPureHelpers(unittest.TestCase):
 
     def test_compile_pattern_exits_on_bad_regex(self):
         self.assertTrue(ct.compile_pattern("ab.", "--grep").search("xabc"))
-        with self.assertRaises(SystemExit) as cm:
-            ct.compile_pattern("[unclosed", "--grep")
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            with self.assertRaises(SystemExit) as cm:
+                ct.compile_pattern("[unclosed", "--grep")
         self.assertEqual(cm.exception.code, 2)
+        self.assertIn("--grep", err.getvalue())
+        self.assertIn("invalid regular expression", err.getvalue())
 
 
 class TestPaneParsing(unittest.TestCase):
@@ -305,6 +311,40 @@ class TestTranscriptScanning(TranscriptFixture):
         self.assertEqual(info["ai_title"], "Buried title")
         self.assertEqual(info_compact["ai_title"], "Compact title")
 
+    def _buried_title_file(self, name, title_fragment):
+        """A file whose only ai-title sits outside the tail window."""
+        path = os.path.join(self.tmp, name)
+        with open(path, "w") as fh:
+            fh.write('{"type":"user","sessionId":"s",'
+                     '"message":{"content":"p"}}\n')
+            fh.write('{"type":"ai-title",%s,"sessionId":"s"}\n' % title_fragment)
+            for _ in range(200):
+                fh.write(json.dumps({"type": "system", "filler": "x" * 200}) + "\n")
+        return path
+
+    def _scan_with_small_tail(self, path):
+        original = ct.TAIL_BYTES
+        try:
+            ct.TAIL_BYTES = 1024
+            return ct.scan_tail(path)
+        finally:
+            ct.TAIL_BYTES = original
+
+    def test_ai_title_grep_tolerates_a_tab_after_the_colon(self):
+        # JSON permits any whitespace after the colon. Claude uses none, but the
+        # fallback must not depend on that.
+        path = self._buried_title_file("tabbed.jsonl", '"aiTitle":\t"Tabbed title"')
+        self.assertEqual(self._scan_with_small_tail(path)["ai_title"],
+                         "Tabbed title")
+
+    def test_title_with_an_escaped_quote_fails_softly(self):
+        # Known limit: the fallback pattern's [^"]* stops at the escaped quote,
+        # so the title is not recovered. What matters is that it degrades to
+        # "no title" and lets the mtime fallback take over, rather than raising.
+        path = self._buried_title_file("escaped.jsonl",
+                                       '"aiTitle":"He said \\"hi\\" loudly"')
+        self.assertIsNone(self._scan_with_small_tail(path)["ai_title"])
+
     def test_count_lines_and_missing_files(self):
         path = self.write_transcript("/Users/x/proj", "s1", "T", ["a"])
         self.assertEqual(ct.count_lines(path), 3)
@@ -495,6 +535,121 @@ class TestFiltering(TranscriptFixture):
         self.assertTrue(ct.matches(row, ct.compile_pattern("shellonly", "--grep")))
 
 
+class TestJump(TranscriptFixture):
+    """--jump is the only code path that changes anything, so pin its contract.
+
+    jump() reaches the outside world only through ct.run and ct.flash_pane, both
+    module globals, so both are replaced here and no tab is ever activated.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.activated = []
+        self.flashed = []
+        self._run, self._flash = ct.run, ct.flash_pane
+        ct.run = lambda cmd, **k: self.activated.append(cmd) or ""
+        ct.flash_pane = lambda pane, color, seconds: (
+            self.flashed.append((pane["tab_index"], color, seconds)) or True)
+        self.err = io.StringIO()
+        self.out = io.StringIO()
+
+    def tearDown(self):
+        ct.run, ct.flash_pane = self._run, self._flash
+        super().tearDown()
+
+    def _jump(self, rows, pattern, **kw):
+        with contextlib.redirect_stderr(self.err), contextlib.redirect_stdout(self.out):
+            return ct.jump(rows, pattern, **kw)
+
+    def shell_row(self, cwd, title, tab):
+        row = self.claude_row(cwd, title, tab=tab)
+        row["claude"] = None
+        return row
+
+    def test_no_match_exits_1_and_changes_nothing(self):
+        rows = [self.claude_row("/Users/x/p", "Some Work")]
+        self.assertEqual(self._jump(rows, "nothing-like-this"), 1)
+        self.assertEqual(self.activated, [], "must not activate a tab")
+        self.assertEqual(self.flashed, [])
+        self.assertIn("no tab matches", self.err.getvalue())
+
+    def test_ambiguous_exits_2_and_changes_nothing(self):
+        rows = [self.claude_row("/Users/x/one", "Deploy the thing", tab=1),
+                self.claude_row("/Users/x/two", "Deploy the other", tab=2)]
+        self.assertEqual(self._jump(rows, "deploy"), 2)
+        self.assertEqual(self.activated, [], "must not activate a tab")
+        self.assertEqual(self.flashed, [])
+        err = self.err.getvalue()
+        self.assertIn("ambiguous: 2 matches", err)
+        # Both candidates are listed so the user can narrow the pattern.
+        self.assertIn("Deploy the thing", err)
+        self.assertIn("Deploy the other", err)
+
+    def test_single_claude_tab_wins_over_matching_shell_tabs(self):
+        # The disambiguation rule: if exactly one match is running Claude, it is
+        # the intended target and the plain shells are noise.
+        rows = [self.shell_row("/Users/x/deploy-notes", "~ (-zsh)", tab=1),
+                self.claude_row("/Users/x/deploy", "Deploy the thing", tab=2),
+                self.shell_row("/Users/x/deploy-old", "~ (-zsh)", tab=3)]
+        self.assertEqual(self._jump(rows, "deploy"), 0)
+        self.assertEqual(len(self.activated), 1)
+        script = self.activated[0][-1]
+        self.assertIn("tell tab 2", script, "activated the wrong tab")
+        self.assertIn("window id 100", script)
+        self.assertIn("Deploy the thing", self.out.getvalue())
+
+    def test_rule_does_not_fire_when_two_matches_run_claude(self):
+        rows = [self.shell_row("/Users/x/deploy-notes", "~ (-zsh)", tab=1),
+                self.claude_row("/Users/x/deploy", "Deploy one", tab=2),
+                self.claude_row("/Users/x/deploy2", "Deploy two", tab=3)]
+        self.assertEqual(self._jump(rows, "deploy"), 2)
+        self.assertEqual(self.activated, [])
+
+    def test_rule_does_not_fire_when_no_match_runs_claude(self):
+        rows = [self.shell_row("/Users/x/deploy-a", "~ (-zsh)", tab=1),
+                self.shell_row("/Users/x/deploy-b", "~ (-zsh)", tab=2)]
+        self.assertEqual(self._jump(rows, "deploy"), 2)
+        self.assertEqual(self.activated, [])
+
+    def test_single_shell_tab_still_jumps(self):
+        rows = [self.shell_row("/Users/x/plain", "~ (-zsh)", tab=4)]
+        self.assertEqual(self._jump(rows, "plain"), 0)
+        self.assertIn("tell tab 4", self.activated[0][-1])
+
+    def test_flash_is_requested_by_default_and_suppressible(self):
+        rows = [self.claude_row("/Users/x/p", "Work", tab=7)]
+        self.assertEqual(self._jump(rows, "Work"), 0)
+        self.assertEqual(self.flashed, [(7, ct.FLASH_COLOR, ct.FLASH_SECONDS)])
+        self.flashed = []
+        self.assertEqual(self._jump(rows, "Work", flash=False), 0)
+        self.assertEqual(self.flashed, [])
+        # A zero or negative duration also means no flash.
+        self.assertEqual(self._jump(rows, "Work", seconds=0), 0)
+        self.assertEqual(self.flashed, [])
+
+    def test_failed_flash_still_reports_a_successful_jump(self):
+        ct.flash_pane = lambda *a: False
+        rows = [self.claude_row("/Users/x/p", "Work", tab=1)]
+        self.assertEqual(self._jump(rows, "Work"), 0, "the jump itself worked")
+        self.assertIn("could not flash", self.err.getvalue())
+
+    def test_bad_regex_exits_2_before_touching_anything(self):
+        rows = [self.claude_row("/Users/x/p", "Work")]
+        with self.assertRaises(SystemExit) as cm:
+            self._jump(rows, "*bad")
+        self.assertEqual(cm.exception.code, 2)
+        self.assertEqual(self.activated, [])
+
+    def test_matches_on_session_id_and_prompt_text(self):
+        self.write_transcript("/Users/x/p", "abc123", "Titled Work",
+                              ["look at the invoice job"])
+        row = self.claude_row("/Users/x/p", "Titled Work")
+        ct.resolve_transcripts([row], use_global=False)
+        self.assertEqual(self._jump([row], "abc123"), 0)
+        self.activated = []
+        self.assertEqual(self._jump([row], "invoice job"), 0)
+
+
 class TestFlashState(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -608,8 +763,6 @@ class TestRendering(TranscriptFixture):
         shell["foreground_command"] = "-zsh"
         rows = [claude, shell]
 
-        import io
-        import contextlib
         for render in (lambda: ct.print_markdown(rows),
                        lambda: ct.print_tree(rows, ct.Paint(False)),
                        lambda: ct.print_tree(rows, ct.Paint(False),

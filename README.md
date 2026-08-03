@@ -199,13 +199,19 @@ AppleScript, never touch the real `~/.claude/projects` or
 is either pointed at a temporary directory or replaced, so they are safe to run
 while you have live sessions open.
 
-The transcript resolver is the part worth guarding, so most of the suite covers
-it: title matching beating a newer unrelated transcript, twenty live sessions in
-one directory each ending up with their own file, a recorded cwd that has drifted
-into a subdirectory still matching, the mtime and weak fallbacks, the global pass
-for a session resumed elsewhere, and two panes being unable to claim two copies
-of one session id. The flash tests assert the recorded colour is reused rather
-than re-read, which is what stops a pane drifting darker.
+`--jump` is the only code path that changes anything, so its contract is pinned:
+no match exits 1, an ambiguous pattern lists the candidates and changes nothing
+(exit 2), and the rule that a single Claude tab wins over matching plain shells
+is tested in both directions. It reaches the outside world only through two
+module-level functions, which the tests replace, so no tab is ever activated.
+
+The transcript resolver is the other part worth guarding, and most of the rest of
+the suite covers it: title matching beating a newer unrelated transcript, twenty
+live sessions in one directory each ending up with their own file, a recorded cwd
+that has drifted into a subdirectory still matching, the mtime and weak
+fallbacks, the global pass for a session resumed elsewhere, and two panes being
+unable to claim two copies of one session id. The flash tests assert the recorded
+colour is reused rather than re-read, which is what stops a pane drifting darker.
 
 ## Licence
 

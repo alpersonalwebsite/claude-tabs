@@ -5,17 +5,32 @@ on:
     branches: [main]
   pull_request:
 
+# Defence in depth: the repository default is already read-only, but pinning it
+# here keeps that true if the repository setting ever changes.
+permissions:
+  contents: read
+
+# A force-push should replace the in-flight run rather than queue behind it.
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   unittest:
     # macOS because that is the only platform the tool supports. The tests
     # themselves never invoke AppleScript, so they do not need a real iTerm2.
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Show interpreter
-        run: python3 --version
-      - name: Run tests
-        run: python3 -m unittest discover -p 'test_*.py' -v
+      - uses: actions/checkout@v7
+      - name: Show interpreters
+        run: |
+          echo "runner python3: $(python3 --version) at $(command -v python3)"
+          echo "system python3: $(/usr/bin/python3 --version)"
+      # Deliberately the system interpreter, not the runner toolchain. The
+      # README promises the macOS system Python, so that is what has to pass;
+      # the toolchain python3 is a much newer version and would hide a break.
+      - name: Run tests on the system interpreter
+        run: /usr/bin/python3 -m unittest discover -p 'test_*.py' -v
       - name: Check the CLI starts
         run: |
           test -x claude_tabs.py
