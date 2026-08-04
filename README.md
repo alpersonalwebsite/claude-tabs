@@ -136,7 +136,7 @@ the tool builds the link from five sources:
 | Question | Source |
 |---|---|
 | What windows, tabs and panes exist? | iTerm2 AppleScript: `unique id`, `tty`, `name`, `path` variable |
-| Which pane is a claude process in? | `ITERM_SESSION_ID` in the process environment (`ps eww`) equals the pane's `unique id` |
+| Which pane is a claude process in? | its own tty when it has one; otherwise `tmux list-panes` and `list-clients` map its tmux pty to the tab hosting that client; failing both, `ITERM_SESSION_ID` from `ps eww` |
 | What directory is it working in? | the process's own cwd via one `lsof -c claude -d cwd` call |
 | Which transcript is it writing? | the `.jsonl` in `~/.claude/projects/<mangled-cwd>/` whose current `ai-title` equals the pane title |
 | What is the session about? | that transcript's `ai-title` (Claude's own summary), plus first and last user prompt |
@@ -181,16 +181,19 @@ only the location differs. `*` is worth surfacing because a transcript sitting
 outside the pane's own project directory usually means the session was resumed
 from somewhere else.
 
-`nested(ttysNNN)` after the metadata means the claude process is not on the
-pane's own tty, which happens inside tmux: `ITERM_SESSION_ID` is inherited from
-whichever pane started the tmux server, so the tab attribution is indirect.
-Those tabs also lose title matching, because the tab name is tmux's, not
-Claude's.
+`tmux <session>:<window>.<pane>` after the metadata means the session is running
+inside tmux, with the coordinates of the tmux pane it occupies. `(hidden)` means
+that pane is not the one currently on screen in that tab.
 
-Measured on a 111-tab, 56-session setup: 55 matched by exact title and 1 by
-mtime (a tmux tab, which has no Claude title to match), in 2.4s. An independent
-cross-check of each process's tty against its pane agreed with the
-`ITERM_SESSION_ID` join on all 55 direct sessions.
+`env-linked(ttysNNN)` is the weakest attribution: the process is not on the
+pane's own tty and is not a tmux pane either, so it was placed only by
+`ITERM_SESSION_ID`, which is inherited and therefore names whichever pane started
+the nesting.
+
+Measured on a 111-tab, 56-session setup: every session matched by exact title, in
+2.4s. tmux sessions match too, because tmux keeps the title the program set, so
+`pane_title` carries Claude's own session title even though the iTerm tab is named
+by tmux. Before that was used, the single tmux tab fell back to an mtime guess.
 
 ## Notes
 
@@ -201,12 +204,18 @@ cross-check of each process's tty against its pane agreed with the
   That is the second AppleScript gap; `tab color` is the first.
 - `--json` and `--save` include prompt text, so treat that output as
   conversation content rather than metadata.
+- The JSON schema changed in 1.2.0. `claude.attached` was `direct` or `nested`
+  and is now `direct`, `tmux` or `env`, and `claude.tmux` is a new key carrying
+  the tmux session, window, pane and visibility when that route applied. Anything
+  matching on `nested` needs updating.
 - Requires Automation permission for iTerm2 for whichever terminal runs it. The
   first run raises the macOS prompt.
 - A tab is reported as running Claude only while the process is alive. Closed
   sessions live on in `~/.claude/projects` but have no tab.
-- A `claude` running inside tmux is attributed to whichever pane started the
-  tmux server, and is marked `nested`. See the match quality markers above.
+- A `claude` running inside tmux is attributed by asking tmux which terminal is
+  attached to its session, not by the inherited environment variable. If several
+  terminals are attached to one tmux session, the first that matches a known pane
+  wins.
 
 ## Tests
 

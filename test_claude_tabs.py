@@ -10,6 +10,7 @@ Run with:  python3 -m unittest -v
 
 import contextlib
 import io
+import socket
 import json
 import os
 import shutil
@@ -809,6 +810,325 @@ class TestRendering(TranscriptFixture):
         with contextlib.redirect_stdout(buf):
             ct.print_markdown(rows)
         self.assertIn("_zsh_", buf.getvalue())
+
+
+TMUX_PANES_OUT = "\n".join([
+    US.join(["/dev/ttys095", "work", "1", "1", "1", "1",
+             "\u2733 Tmux Session Work (claude)"]),
+    US.join(["/dev/ttys096", "work", "2", "1", "1", "0",
+             "\u2733 Hidden Window (claude)"]),
+    US.join(["/dev/ttys097", "other", "1", "1", "1", "1", "~ (-zsh)"]),
+])
+# Real-shaped GUIDs: ITERM_SESSION_RE requires 36 characters, so short
+# stand-ins would make the env route silently unreachable in these fixtures.
+GUID_A = "AAAAAAAA-1111-4111-8111-AAAAAAAAAAAA"
+GUID_B = "BBBBBBBB-2222-4222-8222-BBBBBBBBBBBB"
+
+TMUX_CLIENTS_OUT = "\n".join([
+    US.join(["/dev/ttys006", "work"]),
+    US.join(["/dev/ttys009", "other"]),
+])
+
+
+class TestTmuxIntrospection(unittest.TestCase):
+    def setUp(self):
+        self._run = ct.run
+
+    def tearDown(self):
+        ct.run = self._run
+
+    def test_panes_parse_with_visibility(self):
+        ct.run = lambda *a, **k: TMUX_PANES_OUT
+        panes = ct.tmux_panes()
+        self.assertEqual(sorted(panes), ["ttys095", "ttys096", "ttys097"])
+        self.assertEqual(panes["ttys095"]["session"], "work")
+        self.assertEqual(panes["ttys095"]["title"],
+                         "\u2733 Tmux Session Work (claude)")
+        # Visible means active pane of the active window, so both flags.
+        self.assertTrue(panes["ttys095"]["visible"])
+        self.assertFalse(panes["ttys096"]["visible"])
+
+
+    def test_default_hostname_title_is_recognised(self):
+        import socket
+        host = socket.gethostname()
+        for default in ("", host, host.split(".")[0]):
+            self.assertTrue(ct.is_default_pane_title(default), repr(default))
+        for real in ("Address CodeRabbit review comments", "proj", "vim"):
+            self.assertFalse(ct.is_default_pane_title(real), real)
+
+    def test_clients_group_by_session(self):
+        ct.run = lambda *a, **k: TMUX_CLIENTS_OUT
+        self.assertEqual(ct.tmux_clients(),
+                         {"work": ["ttys006"], "other": ["ttys009"]})
+
+    def test_no_tmux_server_is_not_an_error(self):
+        ct.run = lambda *a, **k: ""
+        self.assertEqual(ct.tmux_panes(), {})
+        self.assertEqual(ct.tmux_clients(), {})
+
+
+class TestClaudeAttribution(unittest.TestCase):
+    """Which iTerm pane is displaying a given claude process."""
+
+    def setUp(self):
+        self._run = ct.run
+        ct.run = self._fake
+
+    def tearDown(self):
+        ct.run = self._run
+
+    @staticmethod
+    def _fake(cmd, **k):
+        if cmd[0] == "tmux":
+            return TMUX_PANES_OUT if cmd[1] == "list-panes" else TMUX_CLIENTS_OUT
+        return ""
+
+    PANES = [
+        {"iterm_session_id": "AAA", "tty": "/dev/ttys001"},
+        {"iterm_session_id": "BBB", "tty": "/dev/ttys006"},
+    ]
+
+    @staticmethod
+    def procs(entries):
+        return {pid: {"pid": pid, "ppid": 1, "tty": tty, "stat": "S+",
+                      "etime": "01:00", "command": "claude"}
+                for pid, tty in entries}
+
+    def test_own_tty_wins(self):
+        procs = self.procs([(300, "ttys001")])
+        got = ct.attribute_claudes(self.PANES, procs, {300}, {300: "BBB"})
+        # The env variable points at the wrong pane; the tty is authoritative.
+        self.assertEqual(got, {"AAA": [(300, "direct", None)]})
+
+
+    def test_tmux_is_not_consulted_when_every_route_is_direct(self):
+        calls = []
+        ct.run = lambda cmd, **k: calls.append(cmd[0]) or ""
+        procs = self.procs([(300, "ttys001")])
+        ct.attribute_claudes(self.PANES, procs, {300}, {})
+        self.assertNotIn("tmux", calls,
+                         "tmux was queried even though the tty already matched")
+
+    def test_no_claude_processes_means_no_subprocesses(self):
+        calls = []
+        ct.run = lambda cmd, **k: calls.append(cmd[0]) or ""
+        self.assertEqual(ct.attribute_claudes(self.PANES, {}, set(), {}), {})
+        self.assertEqual(calls, [])
+
+    def test_tmux_pane_resolves_through_its_client(self):
+        procs = self.procs([(201, "ttys095")])
+        # ITERM_SESSION_ID says AAA, because that is where the tmux server was
+        # started. The client for session "work" is on ttys006, which is BBB.
+        got = ct.attribute_claudes(self.PANES, procs, {201}, {201: "AAA"})
+        self.assertEqual(list(got), ["BBB"])
+        pid, route, facts = got["BBB"][0]
+        self.assertEqual((pid, route), (201, "tmux"))
+        self.assertEqual(facts["session"], "work")
+        self.assertTrue(facts["visible"])
+
+    def test_env_is_the_last_resort(self):
+        procs = self.procs([(400, "ttys123")])  # neither a pane nor a tmux pty
+        got = ct.attribute_claudes(self.PANES, procs, {400}, {400: "AAA"})
+        self.assertEqual(got, {"AAA": [(400, "env", None)]})
+
+    def test_unreachable_process_is_dropped(self):
+        procs = self.procs([(500, "??")])
+        self.assertEqual(ct.attribute_claudes(self.PANES, procs, {500}, {}), {})
+
+    def test_tmux_client_on_no_known_pane_falls_back_to_env(self):
+        # session "other" has a client on ttys009, which is not an iTerm pane.
+        procs = self.procs([(600, "ttys097")])
+        got = ct.attribute_claudes(self.PANES, procs, {600}, {600: "AAA"})
+        self.assertEqual(got, {"AAA": [(600, "env", None)]})
+
+
+class TestBuildIndexWithTmux(TranscriptFixture):
+    """build_index end to end with the whole world stubbed.
+
+    ct.run is the single choke point for osascript, ps, lsof and tmux, so the
+    entire pipeline can run without iTerm2, tmux, or the real filesystem.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self._run, self._state = ct.run, ct.FLASH_STATE
+        ct.FLASH_STATE = os.path.join(self.tmp, "cache", "flash-state.json")
+        ct.run = self._fake
+        # The tmux pane's own transcript, titled the way Claude titled it.
+        self.write_transcript("/Users/x/tmuxproj", "tsid", "Tmux Session Work",
+                              ["do the tmux thing"])
+        # A decoy: newer, so an mtime guess would prefer it.
+        self.write_transcript("/Users/x/tmuxproj", "decoy", "Unrelated Thing",
+                              ["nope"], mtime=time.time() + 100)
+        self.write_transcript("/Users/x/direct", "dsid", "Direct Work", ["go"])
+
+    def tearDown(self):
+        ct.run, ct.FLASH_STATE = self._run, self._state
+        super().tearDown()
+
+    PS = ("  100     1 01:00:00 ttys006 Ss+ tmux attach -t work\n"
+          "  200     1 00:30:00 ttys095 Ss  -zsh\n"
+          "  201   200 00:29:00 ttys095 S+  claude\n"
+          "  300     1 00:10:00 ttys001 S+  claude\n")
+    # Both claims point at AAA: the tmux server was started from that pane, so
+    # the env variable is wrong for pid 201.
+    ENV = ("  201 claude ITERM_SESSION_ID=w0t0p0:%s\n"
+           "  300 claude ITERM_SESSION_ID=w0t0p0:%s\n" % (GUID_A, GUID_A))
+    LSOF = "p201\nn/Users/x/tmuxproj\np300\nn/Users/x/direct\n"
+    TPANES = TMUX_PANES_OUT
+    TCLIENTS = TMUX_CLIENTS_OUT
+
+    def _fake(self, cmd, **k):
+        if cmd[0] == "osascript":
+            return pane_payload([
+                (1, "100", 1, 1, GUID_A, "/dev/ttys001",
+                 "\u2733 Direct Work (claude)", "t", "/Users/x/direct",
+                 "claude", GUID_A, "100"),
+                (1, "100", 2, 1, GUID_B, "/dev/ttys006", "work (tmux)", "t",
+                 "/Users/x/somewhere", "tmux", GUID_A, "100"),
+            ])
+        if cmd[0] == "ps" and cmd[1] == "-Ao":
+            return self.PS
+        if cmd[0] == "ps" and cmd[1] == "eww":
+            return self.ENV
+        if cmd[0] == "lsof":
+            return self.LSOF
+        if cmd[0] == "tmux":
+            return self.TPANES if cmd[1] == "list-panes" else self.TCLIENTS
+        return ""
+
+    def test_tmux_session_is_attributed_and_matched_by_title(self):
+        rows = ct.build_index()
+        by_tab = {r["tab_index"]: r for r in rows}
+        self.assertEqual(sorted(by_tab), [1, 2])
+
+        tmux_row = by_tab[2]
+        cl = tmux_row["claude"]
+        self.assertEqual(cl["pid"], 201)
+        self.assertEqual(cl["attached"], "tmux",
+                         "must resolve through the tmux client, not the env var")
+        self.assertEqual(cl["tmux"]["session"], "work")
+        # The iTerm tab is named by tmux; the title comes from the tmux pane.
+        self.assertEqual(tmux_row["tab_name"], "work (tmux)")
+        self.assertEqual(tmux_row["title"], "Tmux Session Work")
+        # And because the title is real, the transcript is an exact match rather
+        # than the newest-file guess that would have picked the decoy.
+        self.assertMatch(tmux_row, "title")
+        self.assertEqual(cl["session"]["session_id"], "tsid")
+        self.assertEqual(cl["session"]["ai_title"], "Tmux Session Work")
+
+    def test_direct_pane_is_unaffected(self):
+        row = {r["tab_index"]: r for r in ct.build_index()}[1]
+        self.assertEqual(row["claude"]["attached"], "direct")
+        self.assertEqual(row["claude"]["pid"], 300)
+        self.assertMatch(row, "title")
+        self.assertEqual(row["claude"]["session"]["session_id"], "dsid")
+
+    def test_the_tmux_row_renders_its_coordinates(self):
+        rows = ct.build_index()
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            ct.print_tree(rows, ct.Paint(False))
+        out = buf.getvalue()
+        self.assertIn("tmux work:1.1", out)
+        self.assertIn("Tmux Session Work", out)
+
+
+class TestAttributionRanking(TestBuildIndexWithTmux):
+    """When one iTerm pane hosts several claude processes, which one wins."""
+
+    # pid 999 has no recognisable tty, so only ITERM_SESSION_ID places it, and it
+    # names BBB. pid 201 is on a tmux pane whose client is BBB as well.
+    PS = (TestBuildIndexWithTmux.PS +
+          "  999     1 00:05:00 ttys200 S+  claude\n")
+    ENV = (TestBuildIndexWithTmux.ENV +
+           "  999 claude ITERM_SESSION_ID=w0t0p0:%s\n" % GUID_B)
+    LSOF = TestBuildIndexWithTmux.LSOF + "p999\nn/Users/x/envonly\n"
+
+    def test_tmux_beats_an_env_only_claim_on_the_same_pane(self):
+        row = {r["tab_index"]: r for r in ct.build_index()}[2]
+        cl = row["claude"]
+        self.assertEqual(cl["attached"], "tmux",
+                         "a resolved tmux client beats an inherited env var")
+        self.assertEqual(cl["pid"], 201)
+        self.assertIn(999, cl["extra_pids"])
+
+
+class TestVisibleTmuxPaneWins(TestBuildIndexWithTmux):
+    """Two claude sessions in one tmux session, only one on screen."""
+
+    # ttys096 is window 2, which is not the active window, so it is hidden.
+    PS = (TestBuildIndexWithTmux.PS +
+          "  202   200 00:20:00 ttys096 S+  claude\n")
+    ENV = (TestBuildIndexWithTmux.ENV +
+           "  202 claude ITERM_SESSION_ID=w0t0p0:%s\n" % GUID_A)
+    LSOF = TestBuildIndexWithTmux.LSOF + "p202\nn/Users/x/hidden\n"
+
+    def test_the_visible_pane_is_the_one_reported(self):
+        row = {r["tab_index"]: r for r in ct.build_index()}[2]
+        cl = row["claude"]
+        self.assertEqual(cl["pid"], 201, "the tab shows the active tmux pane")
+        self.assertTrue(cl["tmux"]["visible"])
+        self.assertEqual(cl["tmux"]["window"], "1")
+        self.assertIn(202, cl["extra_pids"])
+
+
+
+
+class TestHiddenOnlyTmuxPane(TestBuildIndexWithTmux):
+    """The tab's only claude sits in a tmux window that is not on screen."""
+
+    # 201 is gone, so 202 on ttys096 (window 2, not the active window) is the
+    # only candidate. Nothing is hand-edited: the row is selected and rendered
+    # by the real path.
+    PS = ("  100     1 01:00:00 ttys006 Ss+ tmux attach -t work\n"
+          "  200     1 00:30:00 ttys095 Ss  -zsh\n"
+          "  202   200 00:20:00 ttys096 S+  claude\n"
+          "  300     1 00:10:00 ttys001 S+  claude\n")
+    ENV = ("  202 claude ITERM_SESSION_ID=w0t0p0:%s\n"
+           "  300 claude ITERM_SESSION_ID=w0t0p0:%s\n" % (GUID_A, GUID_A))
+    LSOF = "p202\nn/Users/x/hidden\np300\nn/Users/x/direct\n"
+
+    def test_hidden_pane_is_selected_and_labelled(self):
+        rows = ct.build_index()
+        row = {r["tab_index"]: r for r in rows}[2]
+        cl = row["claude"]
+        self.assertEqual(cl["pid"], 202)
+        self.assertEqual(cl["attached"], "tmux")
+        self.assertFalse(cl["tmux"]["visible"])
+        self.assertEqual(row["title"], "Hidden Window")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            ct.print_tree(rows, ct.Paint(False))
+        self.assertIn("(hidden)", buf.getvalue())
+
+    def test_tmux_session_is_attributed_and_matched_by_title(self):
+        self.skipTest("inherited fixture assumes pid 201 is present")
+
+    def test_the_tmux_row_renders_its_coordinates(self):
+        self.skipTest("inherited fixture assumes pid 201 is present")
+
+
+class TestTmuxDefaultTitleDoesNotOverride(TestBuildIndexWithTmux):
+    """A tmux pane that has set no title reports the hostname."""
+
+    TPANES = US.join(["/dev/ttys095", "work", "1", "1", "1", "1",
+                      socket.gethostname()])
+
+    def test_hostname_title_leaves_the_tab_name_alone(self):
+        row = {r["tab_index"]: r for r in ct.build_index()}[2]
+        self.assertEqual(row["claude"]["attached"], "tmux",
+                         "attribution still works without a title")
+        # tmux's fallback title must not replace the tab's own name.
+        self.assertNotIn(socket.gethostname(), row["title"])
+        self.assertEqual(row["title"], "work")
+
+    def test_the_tmux_row_renders_its_coordinates(self):
+        self.skipTest("this fixture has no Claude-set title")
+
+    def test_tmux_session_is_attributed_and_matched_by_title(self):
+        self.skipTest("this fixture has no Claude-set title")
 
 
 class TestMatchMarkers(TranscriptFixture):
