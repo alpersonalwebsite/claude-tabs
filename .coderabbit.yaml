@@ -56,6 +56,7 @@
 # README.md, claude_tabs.py and its tests.
 
 ---
+# fleet-block: exempt - PUBLIC repo; the auto_review banner below is the same deliberate trim ai-workstation-setup carries, for the same reason.
 language: "en-US"
 tone_instructions: "PUBLIC repo whose tool reads private Claude Code transcripts. The costliest finding is transcript content, a real session id or a real home path in a fixture or example. The read-only contract names three write paths; a fourth breaks it."
 
@@ -70,41 +71,20 @@ reviews:
   #     @coderabbitai full review   re-analyze the whole diff from scratch
   # Or by adding the `review` label (see labels below).
   #
-  # WHY. This account is on PRO PLUS (confirmed from the "Plan: Pro Plus"
-  # line CodeRabbit prints in its own comments). Baseline is 10 reviews per
-  # hour, 300 files per review. Fair Usage degrades it on a rolling 7-day
-  # review count, quoted from the Pro Plus table at
-  # docs.coderabbit.ai/management/plans:
-  #     0-29 reviews / 7 days -> 10 reviews per hour
-  #     30-39                 -> 8
-  #     40-49                 -> 6
-  #     50-59                 -> 5
-  #     60-69                 -> 4
-  #     70-79                 -> 3
-  #     80-89                 -> 2
-  #     90+                   -> 1 review per hour, one at a time
+  # WHY. Requested-only review keeps this repository's review budget
+  # predictable and means every review runs against a finished diff rather
+  # than a moving branch. The account-level reasoning behind that choice is
+  # kept with the maintainer's private configuration, not here.
   #
-  # The account runs ~47 PRs/week across all repositories. Automatic review
-  # everywhere, even capped at one follow-up pass, is ~94 reviews/week, which
-  # lands in the 90+ band and the 1-per-hour floor. That is what makes
-  # manual-only the account-wide default.
-  #
-  # The cost is account-wide, not per repo. A single low-volume repository
-  # costs only its own PRs times ~2, so turning automatic review back on for
-  # one high-stakes, low-traffic repo is cheap; doing it everywhere is not.
-  #
-  # DELIBERATELY NOT HERE: which repositories are configured, and the band
-  # the account currently sits in. Those change on every rollout step, and
-  # keeping them in a block that is copied verbatim meant every new repo
-  # forced an N-file resync and left the others stale in between. That
-  # arithmetic lives where a repository states it, in its own header, which
-  # differs per repo and which not every repo carries. Everything above is
-  # account-wide and stable.
+  # THIS COPY OF THE BLOCK IS TRIMMED RELATIVE TO THE PRIVATE ONES,
+  # DELIBERATELY. They carry plan details, Fair Usage arithmetic and
+  # account-wide volume. This repository is public, so none of that appears
+  # here. If you are diffing against a private copy, the gap is intentional.
   #
   # Consequence worth knowing: the keys below that filter AUTOMATIC review
   # (drafts, ignore_usernames, ignore_title_keywords, auto_incremental_review,
   # auto_pause_after_reviewed_commits) are inert while enabled is false. They
-  # are kept so the block stays identical across repos and so flipping
+  # are kept so the block stays close to identical across repos and so flipping
   # `enabled` to true is a one-line change with sane behavior already in
   # place. This inertness is inferred from the schema, not measured.
   #
