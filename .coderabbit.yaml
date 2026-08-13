@@ -1,0 +1,448 @@
+# yaml-language-server: $schema=https://storage.googleapis.com/coderabbit_public_assets/schema.v2.json
+#
+# claude-tabs, a PUBLIC MIT-licensed tool that indexes iTerm2 panes and the
+# Claude Code session running in each one.
+#
+# Shape (measured 2026-08-13): 6 files. claude_tabs.py (44 KB),
+# test_claude_tabs.py (58 KB), README.md, LICENSE, .gitignore, and one workflow.
+# Stdlib only, macOS only, no dependency manifest of any kind.
+#
+# TWO FACTS SHAPE THIS FILE AND THEY PULL IN THE SAME DIRECTION.
+#
+# FIRST, IT IS PUBLIC. Everything merged is visible immediately and permanently.
+#
+# SECOND, IT READS PRIVATE CONVERSATIONS. The tool joins panes to
+# ~/.claude/projects/<mangled-path>/<session>.jsonl and surfaces a session's
+# title, id, branch and idle time. Those transcripts are the user's own Claude
+# Code history. So the leak that matters here is not a name or a home path,
+# which
+# is what the other public repository on this account worries about. It is
+# TRANSCRIPT CONTENT, or a real session id, or a real project path, arriving
+# in a
+# test fixture or an example and being published.
+#
+# THE REPOSITORY IS ALREADY DISCIPLINED ABOUT THIS, and the config exists to
+# hold
+# that state rather than to fix it. Measured across all three text files: 93
+# occurrences of `/Users/x`, a placeholder, and NOT ONE real home path; zero
+# email addresses; zero employer domains; and the README and the module itself
+# carry no identifying data at all.
+#
+# THE READ-ONLY CONTRACT IS ENUMERABLE, WHICH IS WHY IT IS WORTH GUARDING. The
+# module docstring does not say "mostly read-only" and leave it there. It names
+# every exception: --jump selects a tab and briefly tints it, --save writes the
+# file you name, and any invocation may repaint a pane and rewrite the
+# flash-state cache if an earlier --jump was interrupted. Then it states the
+# line
+# that matters: transcripts are only ever read.
+#
+# A FOURTH WRITE PATH WOULD BREAK A PUBLISHED PROMISE SILENTLY. Nothing in CI
+# counts write sites, and a new one would look like ordinary code.
+#
+# WHAT CI ACTUALLY COVERS, so the instructions do not duplicate it. One workflow
+# on macOS, because that is the only supported platform. It runs the suite
+# twice,
+# on /usr/bin/python3 AND on the runner's python3, and the file says why: the
+# system interpreter is the floor the README promises. That dual run is also, in
+# practice, THE STDLIB-ONLY ENFORCEMENT, since the system Python carries no
+# third-party packages, so an added import fails there and nowhere else. It also
+# smoke-tests the CLI and sets persist-credentials: false on checkout, with the
+# reason written next to it.
+#
+# So syntax, imports and basic startup are covered. What is not covered is the
+# read-only contract, what gets printed, and what a fixture contains.
+#
+# Volume: 5 pull requests in the 90 days to 2026-08-13, concentrated in
+# README.md, claude_tabs.py and its tests.
+
+---
+# fleet-block: exempt - PUBLIC repo, deliberate banner trim (see header)
+language: "en-US"
+tone_instructions: "PUBLIC repo whose tool reads private Claude Code transcripts. The costliest finding is transcript content, a real session id or a real home path in a fixture or example. The read-only contract names three write paths; a fourth breaks it."
+
+reviews:
+  profile: "chill"
+
+  # ------------------------------------------------------------------
+  # MANUAL REVIEW ONLY. Reviews are requested, never automatic.
+  #
+  # Trigger a review by commenting on the PR:
+  #     @coderabbitai review        incremental, new changes since last pass
+  #     @coderabbitai full review   re-analyze the whole diff from scratch
+  # Or by adding the `review` label (see labels below).
+  #
+  # WHY. Requested-only review keeps this repository's review budget
+  # predictable and means every review runs against a finished diff rather
+  # than a moving branch. The account-level reasoning behind that choice is
+  # kept with the maintainer's private configuration, not here.
+  #
+  # THIS COPY OF THE BLOCK IS TRIMMED RELATIVE TO THE PRIVATE ONES,
+  # DELIBERATELY. They carry plan details, Fair Usage arithmetic and
+  # account-wide volume. This repository is public, so none of that appears
+  # here. If you are diffing against a private copy, the gap is intentional.
+  #
+  # Consequence worth knowing: the keys below that filter AUTOMATIC review
+  # (drafts, ignore_usernames, ignore_title_keywords, auto_incremental_review,
+  # auto_pause_after_reviewed_commits) are inert while enabled is false. They
+  # are kept so the block stays close to identical across repos and so flipping
+  # `enabled` to true is a one-line change with sane behavior already in
+  # place. This inertness is inferred from the schema, not measured.
+  #
+  # What DOES stay live: path_filters, path_instructions, tools, and profile.
+  # Those govern every review, requested or automatic, so they are where this
+  # file now does its work.
+  # ------------------------------------------------------------------
+  auto_review:
+    enabled: false
+
+    # Opt-in path. Per the schema, when `enabled` is false a positive label
+    # match triggers a review. Secondary to `@coderabbitai review`, which is
+    # the primary trigger here. CONFIRMED on this account, in two parts and
+    # on two different PRs. The label FLIP was observed on dotfiles#30, whose
+    # CodeRabbit commit status went from `Review skipped: excluded by label
+    # configuration` to `Review queued` then `Review in progress` once the
+    # label was added. That a review then actually POSTS was observed on
+    # ai-workstation-setup#28, which carries the label and has CodeRabbit
+    # reviews, one opening `Actionable comments posted: 1`.
+    #
+    # Those status strings are transient, and are NOT in the PR's comments,
+    # its reviews, or the current check rollup: all of those show only the
+    # latest state, and the rollup description is empty once a run settles.
+    # The commit status HISTORY retains every post, so that is where to
+    # re-check the sequence above:
+    #     gh api repos/<owner>/<repo>/commits/<head-sha>/statuses
+    #
+    # READ THE REVIEW COUNT, NOT THE ROW. #28's final status reads `Review
+    # rate limited`, and an earlier one read `Review skipped: automatic
+    # reviews are disabled`, both while real reviews existed on the PR.
+    labels:
+      - "review"
+
+    # --- inert while enabled is false; retained for a one-line flip ---
+    drafts: false
+    auto_incremental_review: true          # default: true
+    auto_pause_after_reviewed_commits: 1   # default: 5
+    base_branches: []                      # default: [] (default branch only)
+    ignore_usernames:
+      - "dependabot[bot]"
+      - "renovate[bot]"
+      - "github-actions[bot]"
+    # Case-insensitive SUBSTRING match on the whole title. Bracketed forms
+    # fail safe: bare "WIP" would also match "swipe" or "wipe stale logs"
+    # and silently skip a review, whereas a bracketed token that misses just
+    # means a review runs when it need not have.
+    ignore_title_keywords:
+      - "[WIP]"
+      - "DO NOT MERGE"
+      - "[skip review]"
+
+  high_level_summary: true
+  poem: false
+  sequence_diagrams: false
+  changed_files_summary: false
+  suggested_labels: false
+  suggested_reviewers: false
+  related_issues: true
+  related_prs: true
+  review_status: true
+  abort_on_close: true
+  request_changes_workflow: false
+
+  # Six files, five of them reviewed.
+  #
+  # FOUR DOT-AWARE SHAPES, because minimatch defaults to dot: false and no
+  # wildcard segment matches a leading dot. Measured against this tree, `**/*`
+  # alone would skip .gitignore AND the only workflow.
+  #   **/*            ordinary files                 (4, minus LICENSE)
+  #   **/.*           dot-named files                (.gitignore, and this file
+  #                   once it merges)
+  #   **/.*/**/*      files inside a dot-directory   (the workflow)
+  #   **/.*/**/.*     dot-named files in a dot-dir   (none today, kept so a
+  #                   future .github/.keep is not silently unreviewed)
+  #
+  # LICENSE IS EXCLUDED, and that is deliberate rather than an oversight. Its
+  # MIT
+  # header carries a real copyright name, which is the license working correctly
+  # rather than a leak. The instruction below treats a real identity as a
+  # high-severity finding, so pulling LICENSE into scope would flag that line on
+  # every pull request touching it. Same call, and the same reasoning, as the
+  # other public repository on this account.
+  path_filters:
+    - "**/*"
+    - "**/.*"
+    - "**/.*/**/*"
+    - "**/.*/**/.*"
+    - "!LICENSE"
+
+  path_instructions:
+    - path: "**/*"
+      instructions: |
+        THIS REPOSITORY IS PUBLIC AND THE TOOL READS PRIVATE CONVERSATIONS.
+        Apply this check to every file in every diff, before anything else.
+
+        The tool joins iTerm2 panes to Claude Code session transcripts under
+        ~/.claude/projects and surfaces their titles, ids, branches and idle
+        times. So the leak to look for is not only the usual one. Flag:
+
+          - TRANSCRIPT CONTENT of any kind, including a session title, a prompt,
+            or a snippet of conversation, appearing in a test, a docstring, an
+            example or a committed output sample;
+          - a real session id or project directory name, which encodes the
+            absolute path of somebody's working directory;
+          - an absolute path under a real home directory. The established
+            placeholder here is `/Users/x`, used 93 times, and anything that is
+            not obviously a placeholder should be treated as real;
+          - a personal name, email address, employer, hostname or internal URL.
+
+        None of this fails CI, and none of it is recoverable once merged: the
+        repository is public and so is its history. Treat a suspected leak as
+        the
+        highest-severity finding in the diff, above any correctness issue.
+
+        Skip style and formatting opinions. The tool is stdlib-only and macOS-
+        only by design, so flag a new third-party import and any use of a Linux
+        or GNU-only behaviour rather than commenting on layout.
+
+    - path: "claude_tabs.py"
+      instructions: |
+        THE TOOL ITSELF, and it publishes a precise contract in its own module
+        docstring rather than a vague one. Hold it to exactly that.
+
+        "Almost entirely read-only. Three exceptions: --jump selects a tab and
+        briefly tints it, --save writes the file you name, and any invocation
+        may
+        repaint a pane and rewrite the flash-state cache if an earlier --jump
+        was
+        interrupted before it could restore the colour. Transcripts are only
+        ever
+        read."
+
+        A FOURTH WRITE PATH BREAKS A PUBLISHED PROMISE, AND NOTHING COUNTS THEM.
+        Flag any new write, and say which of the three named exceptions it
+        claims
+        to be. In particular flag: a new file opened for writing or appending, a
+        new directory created, an os.replace or rename outside the flash-state
+        cache, anything writing to a tty beyond the documented colour escape,
+        and
+        any AppleScript that sets state rather than reading it.
+
+        FLAG ANY WRITE TO A TRANSCRIPT PATH AT THE HIGHEST SEVERITY.
+        "Transcripts
+        are only ever read" is the strongest sentence in the docstring and the
+        one a user relies on.
+
+        The join logic is the correctness core: pane unique id to tty, ITERM_
+        SESSION_ID inherited by the claude process, cwd to a mangled project
+        directory, and an ai-title match with an mtime fallback. A change there
+        can silently attribute one person's session to another pane, which
+        prints
+        the wrong transcript's metadata. Flag changes that loosen the match,
+        especially the fallback, since a wrong answer looks identical to a right
+        one.
+
+        Bounds exist for a reason: a directory scan limit, and head and tail
+        byte
+        caps when reading a .jsonl. Flag their removal or a large increase,
+        since
+        they are what keep this from reading a whole transcript into memory.
+
+        Watch what reaches stdout. This prints metadata about private sessions,
+        so flag a new field that exposes transcript CONTENT rather than a title,
+        and any debug or verbose path that dumps a raw record.
+
+        Subprocess use is osascript and ps. Flag a shell=True, an unquoted
+        interpolation into a command, a removed timeout, and any new binary
+        invoked without one.
+
+    - path: "test_claude_tabs.py"
+      instructions: |
+        LARGER THAN THE MODULE IT TESTS, 58 KB against 44 KB, and CI runs it on
+        two interpreters. Treat it as the specification.
+
+        FIXTURES ARE THE MOST LIKELY LEAK SITE IN THIS REPOSITORY, because a
+        realistic test of a transcript reader wants realistic transcript data.
+        The established convention is the placeholder `/Users/x`, used
+        throughout. Flag any fixture that looks captured rather than
+        constructed:
+        a plausible home directory, a real-looking project path, a session title
+        that reads like an actual task, or conversation text.
+
+        A DELETED OR WEAKENED ASSERTION IS A FINDING, not test churn. Ask what
+        each removed assertion used to pin and say so. Watch particularly for
+        tests covering the read-only contract and the pane-to-session join,
+        since
+        those are the two properties nothing else checks.
+
+        A behaviour change in claude_tabs.py with no test change is the other
+        half of the same gap. Name which case should have been added.
+
+        The suite must keep passing on the SYSTEM interpreter, not just a modern
+        one. Flag syntax or stdlib APIs newer than that floor, since that run is
+        what proves the README's promise.
+
+    - path: "README.md"
+      instructions: |
+        The public face of the tool, and the most edited file here.
+
+        Review for ACCURACY AGAINST THE CODE changed in the same pull request. A
+        documented flag, output column or path that no longer matches
+        claude_tabs.py is a real defect, because a stranger runs these commands
+        against their own machine.
+
+        The read-only claim and the stdlib-only, macOS-only claims are PROMISES
+        made to that stranger. Flag a change that softens or removes one without
+        a corresponding code change, and flag a code change that invalidates one
+        while this file still asserts it.
+
+        Screenshots, sample output and example invocations are the leak risk
+        here: real output from this tool contains real session titles and paths.
+        Flag any example that looks captured rather than constructed.
+
+    - path: "**/.*/**/*"
+      instructions: |
+        APPLY THE FULL LEAK CHECK FROM THE `**/*` INSTRUCTION HERE TOO. That
+        pattern cannot reach this path, so without saying so the
+        highest-severity rule in this file skips the workflow entirely. A
+        workflow is a plausible place for that to matter: a debug step echoing
+        real output, a sample invocation, or a fixture path pasted into a run
+        command would each carry transcript data into a public repository.
+
+        The tests workflow, reachable only by this pattern: `**` will not
+        cross a
+        leading-dot segment and `.*` matches only a final one, so neither `**/*`
+        nor `**/.*` sees .github/workflows/ at all.
+
+        THIS WORKFLOW IS THE ONLY MECHANICAL GATE, and two of its properties are
+        load-bearing rather than incidental:
+
+          - It runs the suite on BOTH /usr/bin/python3 and the runner's python3.
+            The system interpreter is the floor the README promises, and because
+            it carries no third-party packages, that run is in practice what
+            enforces stdlib-only. Removing it would let a new dependency pass
+            unnoticed. Flag its removal or a change that skips it.
+          - checkout sets persist-credentials: false, with the reason written
+            beside it. Flag its removal or any step added afterwards that would
+            need those credentials.
+
+        Flag anything that lets the job pass without running the tests: a
+        continue-on-error, an added `|| true`, a narrowed trigger, or a changed
+        discovery pattern that matches fewer files.
+
+        Standard hardening applies, and matters more on a public repository
+        where
+        anyone can open a pull request. Flag `pull_request_target` combined with
+        checkout of untrusted code, actions pinned to mutable tags rather than
+        commit SHAs, a widened `permissions:` block, and any step that could
+        echo
+        a secret.
+
+    - path: "**/.*"
+      instructions: |
+        APPLY THE FULL LEAK CHECK FROM THE `**/*` INSTRUCTION HERE TOO:
+        transcript content, a real session id, a real project directory name,
+        an absolute path under a real home directory, a personal name or an
+        email address. `**/*` cannot match a leading dot under minimatch's
+        dot: false default, so without this the highest-severity rule in the
+        file would skip every dot-named file, including this config itself.
+
+        Dot-named files: .gitignore, and this config once it merges. Reached by
+        this pattern because `**/*` cannot match a leading dot under minimatch's
+        dot: false default.
+
+        For .gitignore on a PUBLIC repository, the boundary matters more than
+        usual. Flag any change that removes or narrows a rule covering `.env`,
+        `*.env`, `credentials*`, `secrets/`, `*.key`, `*.pem`, and flag a new
+        negation that would un-ignore anything beyond an obvious `.example`
+        template. Flag the removal of any rule that keeps local output, caches
+        or
+        captured samples out of the repository, since those are exactly what
+        would carry transcript data.
+
+        For this config file, check the traps that make it fail silently rather
+        than loudly: an entry ending in a bare `/**` matches directory paths
+        rather than files and applies to nothing, a wildcard cannot match a
+        leading dot, an instruction glob matching zero files is
+        indistinguishable from one that works, and tone_instructions has a
+        250-character limit above which the whole file is rejected and the
+        repository falls back to defaults with no error.
+
+    - path: "**/.*/**/.*"
+      instructions: |
+        Dot-named files inside a dot-directory, the fourth of the four shapes.
+        Nothing matches today. It is mirrored here rather than left on the
+        filter
+        side alone because filtering a class in without instructing it is the
+        quieter half of the same failure: the file is reviewed, but with generic
+        guidance, and nothing reports that the guidance went missing.
+
+        Apply the repository-wide leak check, and the workflow reasoning from
+        the
+        `**/.*/**/*` entry if the file sits under .github/.
+
+  finishing_touches:
+    docstrings:
+      enabled: false
+    unit_tests:
+      enabled: false
+    simplify:
+      enabled: false
+    autofix:
+      enabled: false
+    fix_ci:
+      enabled: false
+
+  pre_merge_checks:
+    title:
+      mode: "off"
+    description:
+      mode: "off"
+    docstrings:
+      mode: "off"
+
+  # Every linter defaults to ENABLED, so this block is mostly about turning
+  # noise
+  # off. Linters cost no review quota; only the number of reviews does.
+  tools:
+    ruff:
+      enabled: true       # two python files, 102 KB between them
+    gitleaks:
+      enabled: true
+    trufflehog:
+      enabled: true
+    semgrep:
+      enabled: true
+    actionlint:
+      enabled: true       # .github/workflows/tests.yml
+    yamllint:
+      enabled: true       # that workflow and this config are the only YAML
+    pylint:
+      enabled: false      # ruff covers this; both together is noise
+    flake8:
+      enabled: false      # same
+    shellcheck:
+      enabled: false      # no shell scripts in the tree
+    # ON here, unlike the private repositories on this account, and for the same
+    # reason ai-workstation-setup keeps it: this README is published prose that
+    # strangers read as the tool's documentation, so presentation defects cost
+    # more than the noise they add across a single markdown file.
+    markdownlint:
+      enabled: true
+    languagetool:
+      enabled: false      # style opinions on somebody else's README
+
+chat:
+  art: false
+  auto_reply: true
+
+knowledge_base:
+  opt_out: false
+  code_guidelines:
+    enabled: true
+    # The README is the published contract, and the module docstring states the
+    # read-only exceptions this config spends most of its length protecting.
+    filePatterns:
+      - "README.md"
+  learnings:
+    scope: "local"
+  pull_requests:
+    scope: "local"
