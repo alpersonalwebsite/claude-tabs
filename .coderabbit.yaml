@@ -56,7 +56,7 @@
 # README.md, claude_tabs.py and its tests.
 
 ---
-# fleet-block: exempt - PUBLIC repo; the auto_review banner below is the same deliberate trim ai-workstation-setup carries, for the same reason.
+# fleet-block: exempt - PUBLIC repo, deliberate banner trim (see header)
 language: "en-US"
 tone_instructions: "PUBLIC repo whose tool reads private Claude Code transcripts. The costliest finding is transcript content, a real session id or a real home path in a fixture or example. The read-only contract names three write paths; a fourth breaks it."
 
@@ -300,6 +300,13 @@ reviews:
 
     - path: "**/.*/**/*"
       instructions: |
+        APPLY THE FULL LEAK CHECK FROM THE `**/*` INSTRUCTION HERE TOO. That
+        pattern cannot reach this path, so without saying so the
+        highest-severity rule in this file skips the workflow entirely. A
+        workflow is a plausible place for that to matter: a debug step echoing
+        real output, a sample invocation, or a fixture path pasted into a run
+        command would each carry transcript data into a public repository.
+
         The tests workflow, reachable only by this pattern: `**` will not
         cross a
         leading-dot segment and `.*` matches only a final one, so neither `**/*`
@@ -331,6 +338,13 @@ reviews:
 
     - path: "**/.*"
       instructions: |
+        APPLY THE FULL LEAK CHECK FROM THE `**/*` INSTRUCTION HERE TOO:
+        transcript content, a real session id, a real project directory name,
+        an absolute path under a real home directory, a personal name or an
+        email address. `**/*` cannot match a leading dot under minimatch's
+        dot: false default, so without this the highest-severity rule in the
+        file would skip every dot-named file, including this config itself.
+
         Dot-named files: .gitignore, and this config once it merges. Reached by
         this pattern because `**/*` cannot match a leading dot under minimatch's
         dot: false default.
